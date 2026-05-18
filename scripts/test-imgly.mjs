@@ -1,5 +1,5 @@
-// One-off smoke test: feed the existing HF sample PNG through @imgly
-// and write the result to docs/. Run with: node scripts/test-imgly.mjs
+// One-off smoke test for @imgly/background-removal-node.
+// Run with: node scripts/test-imgly.mjs
 import { removeBackground } from "@imgly/background-removal-node";
 import { readFile, writeFile } from "node:fs/promises";
 
@@ -11,7 +11,7 @@ console.log(`Loading ${INPUT}…`);
 const input = await readFile(INPUT);
 const blob = new Blob([input], { type: "image/png" });
 
-console.log("Running @imgly removeBackground (first run downloads ~25MB model to OS cache)…");
+console.log("Running @imgly removeBackground (node + onnxruntime-node) …");
 const result = await removeBackground(blob, {
   output: { format: "image/png", quality: 0.95 },
 });
