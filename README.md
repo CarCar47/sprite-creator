@@ -27,7 +27,7 @@ The app runs at http://localhost:3000. Health check at `/api/health`.
 
 - Next.js 16 (App Router) + React 19 + TypeScript strict
 - Tailwind CSS 4
-- Google Gen AI SDK (`@google/genai`) targeting `gemini-3.1-flash-image-preview`
+- Google Gen AI SDK (`@google/genai`) targeting `gemini-2.5-flash-image` on the free tier
 - `sharp` for chroma-key transparency, grid slicing, and uniform-frame repacking
 - `zod` for request validation at the trust boundary
 - `@upstash/ratelimit` + Upstash Redis for distributed per-IP rate limiting

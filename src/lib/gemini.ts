@@ -1,6 +1,6 @@
 import { GoogleGenAI, type GenerateContentResponse } from "@google/genai";
 
-const DEFAULT_MODEL = "gemini-3.1-flash-image-preview";
+const DEFAULT_MODEL = "gemini-2.5-flash-image";
 
 export class GeminiSafetyError extends Error {
   constructor(
