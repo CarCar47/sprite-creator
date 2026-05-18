@@ -38,6 +38,90 @@ export function buildPollinationsUrl(prompt: string, opts: ImageGenOpts = {}): s
   return `${ENDPOINT}/${encodeURIComponent(prompt)}?${params.toString()}`;
 }
 
+async function callPollinations(
+  url: string,
+  signal: AbortSignal | undefined,
+  attempt = 0,
+): Promise<Buffer> {
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: "GET",
+      signal,
+      headers: { Accept: "image/*" },
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new ProviderError("Pollinations request was aborted", "timeout", "pollinations");
+    }
+    if (attempt < 1) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return callPollinations(url, signal, attempt + 1);
+    }
+    throw new ProviderError(
+      `Pollinations network error after retry: ${err instanceof Error ? err.message : String(err)}`,
+      "upstream",
+      "pollinations",
+    );
+  }
+
+  if (res.status === 429) {
+    const retryAfter = parseInt(res.headers.get("retry-after") ?? "30", 10);
+    if (attempt < 1) {
+      const waitMs = Math.min(5000, Math.max(1000, retryAfter * 1000));
+      await new Promise((r) => setTimeout(r, waitMs));
+      return callPollinations(url, signal, attempt + 1);
+    }
+    throw new ProviderError(
+      "Pollinations is rate-limiting this client (their free tier shares limits across Vercel's egress IPs). Try Regenerate, or set HF_TOKEN to use HuggingFace.",
+      "rate_limit",
+      "pollinations",
+      retryAfter,
+    );
+  }
+
+  if (res.status >= 500 && res.status < 600 && attempt < 1) {
+    await new Promise((r) => setTimeout(r, 2000));
+    return callPollinations(url, signal, attempt + 1);
+  }
+
+  if (!res.ok) {
+    throw new ProviderError(
+      `Pollinations returned HTTP ${res.status}${attempt > 0 ? " after retry" : ""}`,
+      "upstream",
+      "pollinations",
+    );
+  }
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (!contentType.startsWith("image/")) {
+    const sample = await res.text().catch(() => "");
+    if (attempt < 1) {
+      await new Promise((r) => setTimeout(r, 1500));
+      return callPollinations(url, signal, attempt + 1);
+    }
+    throw new ProviderError(
+      `Pollinations returned non-image content-type ${contentType}${sample ? `: ${sample.slice(0, 200)}` : ""}`,
+      "no_image",
+      "pollinations",
+    );
+  }
+
+  const arr = await res.arrayBuffer();
+  if (arr.byteLength === 0) {
+    if (attempt < 1) {
+      await new Promise((r) => setTimeout(r, 2000));
+      return callPollinations(url, signal, attempt + 1);
+    }
+    throw new ProviderError(
+      "Pollinations returned an empty body after retry. Try Regenerate, or set HF_TOKEN to use HuggingFace.",
+      "no_image",
+      "pollinations",
+    );
+  }
+  return Buffer.from(arr);
+}
+
 export const pollinations: ImageProvider = {
   id: "pollinations",
   label: "Pollinations (no signup, truly free)",
@@ -48,56 +132,6 @@ export const pollinations: ImageProvider = {
 
   async generateFromText(prompt, opts) {
     const url = buildPollinationsUrl(prompt, opts);
-
-    let res: Response;
-    try {
-      res = await fetch(url, {
-        method: "GET",
-        signal: opts.signal,
-        headers: { Accept: "image/*" },
-      });
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") {
-        throw new ProviderError("Pollinations request was aborted", "timeout", "pollinations");
-      }
-      throw new ProviderError(
-        `Pollinations network error: ${err instanceof Error ? err.message : String(err)}`,
-        "upstream",
-        "pollinations",
-      );
-    }
-
-    if (res.status === 429) {
-      const retryAfter = parseInt(res.headers.get("retry-after") ?? "60", 10);
-      throw new ProviderError(
-        "Pollinations is rate-limiting this client. Try again shortly or switch providers.",
-        "rate_limit",
-        "pollinations",
-        retryAfter,
-      );
-    }
-
-    if (!res.ok) {
-      throw new ProviderError(
-        `Pollinations returned HTTP ${res.status}`,
-        "upstream",
-        "pollinations",
-      );
-    }
-
-    const contentType = res.headers.get("content-type") ?? "";
-    if (!contentType.startsWith("image/")) {
-      throw new ProviderError(
-        `Pollinations returned non-image content-type: ${contentType}`,
-        "no_image",
-        "pollinations",
-      );
-    }
-
-    const arr = await res.arrayBuffer();
-    if (arr.byteLength === 0) {
-      throw new ProviderError("Pollinations returned an empty body", "no_image", "pollinations");
-    }
-    return Buffer.from(arr);
+    return callPollinations(url, opts.signal);
   },
 };

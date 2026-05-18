@@ -86,6 +86,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof ProviderError) {
+      console.warn(
+        `[generate-base] provider=${err.providerId} code=${err.code} message=${err.message}`,
+      );
       return NextResponse.json(
         {
           error: err.code,
