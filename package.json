@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@google/genai": "^2.3.0",
+    "@huggingface/inference": "^4.13.15",
     "@upstash/ratelimit": "^2.0.8",
     "@upstash/redis": "^1.38.0",
     "jszip": "^3.10.1",

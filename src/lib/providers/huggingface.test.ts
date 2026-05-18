@@ -29,6 +29,6 @@ describe("huggingface provider metadata", () => {
   });
 
   it("declares FLUX.1-schnell as its model", () => {
-    expect(huggingface.modelLabel).toBe("FLUX.1-schnell");
+    expect(huggingface.modelLabel).toBe("black-forest-labs/FLUX.1-schnell");
   });
 });
