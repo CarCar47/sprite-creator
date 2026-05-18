@@ -35,6 +35,22 @@ describe("/api/health", () => {
     expect(body.model).toBe("gemini-3.1-flash-image-preview");
   });
 
+  it("reports hasUpstash true when KV_REST_API_URL and KV_REST_API_TOKEN are present", async () => {
+    process.env.KV_REST_API_URL = "https://example.upstash.io";
+    process.env.KV_REST_API_TOKEN = "test-token";
+    const res = await GET();
+    const body = await res.json();
+    expect(body.hasUpstash).toBe(true);
+  });
+
+  it("reports hasUpstash false when KV vars are absent", async () => {
+    delete process.env.KV_REST_API_URL;
+    delete process.env.KV_REST_API_TOKEN;
+    const res = await GET();
+    const body = await res.json();
+    expect(body.hasUpstash).toBe(false);
+  });
+
   it("sets Cache-Control no-store", async () => {
     const res = await GET();
     expect(res.headers.get("Cache-Control")).toBe("no-store");

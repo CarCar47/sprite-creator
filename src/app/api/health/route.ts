@@ -10,9 +10,7 @@ export async function GET() {
       version: packageJson.version,
       model: process.env.GEMINI_IMAGE_MODEL ?? "gemini-3.1-flash-image-preview",
       hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
-      hasUpstash: Boolean(
-        process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN,
-      ),
+      hasUpstash: Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
     },
     {
       headers: {
