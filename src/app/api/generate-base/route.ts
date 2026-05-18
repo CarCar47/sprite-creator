@@ -4,7 +4,7 @@ import type { BaseResponse } from "@/lib/validators";
 import { buildBasePromptFromRequest } from "@/lib/prompts/baseCharacter";
 import { getProvider, pickDefaultProviderId } from "@/lib/providers/registry";
 import { ProviderError } from "@/lib/providers/types";
-import { chromaKeyToAlpha } from "@/lib/chromaKey";
+import { removeBackground } from "@/lib/backgroundRemoval";
 import { trimToAlphaBoundingBox, pngMetadata } from "@/lib/imageProcessing";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
@@ -133,10 +133,10 @@ export async function POST(req: NextRequest) {
   let transparent: Buffer;
   let trimmed: Buffer;
   try {
-    transparent = await chromaKeyToAlpha(rawImage, input.chromaColor, { defringe: true });
+    transparent = await removeBackground(rawImage);
     trimmed = await trimToAlphaBoundingBox(transparent, 8);
   } catch (err) {
-    console.error("[generate-base] sharp error:", err);
+    console.error("[generate-base] background-removal/sharp error:", err);
     return NextResponse.json(
       {
         error: "image_processing_failed",
