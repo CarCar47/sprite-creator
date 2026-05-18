@@ -1,7 +1,7 @@
 import sharp from "sharp";
 import type { ChromaColor } from "@/lib/validators";
 
-export const DEFAULT_TOLERANCE = 40;
+export const DEFAULT_TOLERANCE = 60;
 
 function hexToRgb(hex: ChromaColor): [number, number, number] {
   if (hex === "#00FF00") return [0, 255, 0];

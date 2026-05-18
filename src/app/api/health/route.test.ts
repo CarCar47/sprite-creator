@@ -12,43 +12,31 @@ describe("/api/health", () => {
     process.env = originalEnv;
   });
 
-  it("returns ok with hasGeminiKey false when key is absent", async () => {
-    delete process.env.GEMINI_API_KEY;
+  it("returns status ok", async () => {
     const res = await GET();
     const body = await res.json();
     expect(res.status).toBe(200);
     expect(body.status).toBe("ok");
-    expect(body.hasGeminiKey).toBe(false);
   });
 
-  it("returns hasGeminiKey true when key is present", async () => {
-    process.env.GEMINI_API_KEY = "test-key";
+  it("includes a providers summary with at least pollinations available", async () => {
     const res = await GET();
     const body = await res.json();
-    expect(body.hasGeminiKey).toBe(true);
+    expect(body.providers).toBeDefined();
+    expect(body.providers.available).toContain("pollinations");
+    expect(Array.isArray(body.providers.providers)).toBe(true);
   });
 
-  it("reports the configured model", async () => {
-    process.env.GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview";
-    const res = await GET();
-    const body = await res.json();
-    expect(body.model).toBe("gemini-3.1-flash-image-preview");
-  });
-
-  it("reports hasUpstash true when KV_REST_API_URL and KV_REST_API_TOKEN are present", async () => {
-    process.env.KV_REST_API_URL = "https://example.upstash.io";
-    process.env.KV_REST_API_TOKEN = "test-token";
-    const res = await GET();
-    const body = await res.json();
-    expect(body.hasUpstash).toBe(true);
-  });
-
-  it("reports hasUpstash false when KV vars are absent", async () => {
+  it("reports hasUpstash true when KV vars are present, false when absent", async () => {
     delete process.env.KV_REST_API_URL;
     delete process.env.KV_REST_API_TOKEN;
-    const res = await GET();
-    const body = await res.json();
-    expect(body.hasUpstash).toBe(false);
+    const noUpstash = await (await GET()).json();
+    expect(noUpstash.hasUpstash).toBe(false);
+
+    process.env.KV_REST_API_URL = "https://example.upstash.io";
+    process.env.KV_REST_API_TOKEN = "token";
+    const withUpstash = await (await GET()).json();
+    expect(withUpstash.hasUpstash).toBe(true);
   });
 
   it("sets Cache-Control no-store", async () => {

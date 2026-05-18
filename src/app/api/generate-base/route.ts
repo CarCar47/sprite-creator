@@ -2,12 +2,8 @@ import { NextResponse, type NextRequest } from "next/server";
 import { BaseRequestSchema, PPU_BY_STYLE } from "@/lib/validators";
 import type { BaseResponse } from "@/lib/validators";
 import { buildBasePromptFromRequest } from "@/lib/prompts/baseCharacter";
-import {
-  generateImageFromText,
-  GeminiSafetyError,
-  GeminiNoImageError,
-  GeminiUpstreamError,
-} from "@/lib/gemini";
+import { getProvider, pickDefaultProviderId } from "@/lib/providers/registry";
+import { ProviderError } from "@/lib/providers/types";
 import { chromaKeyToAlpha } from "@/lib/chromaKey";
 import { trimToAlphaBoundingBox, pngMetadata } from "@/lib/imageProcessing";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
@@ -16,10 +12,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SOFT_TIMEOUT_MS = 50_000;
-
-const JSON_HEADERS = {
-  "Cache-Control": "no-store",
-} as const;
+const JSON_HEADERS = { "Cache-Control": "no-store" } as const;
 
 export async function POST(req: NextRequest) {
   let payload: unknown;
@@ -44,6 +37,19 @@ export async function POST(req: NextRequest) {
     );
   }
   const input = parsed.data;
+
+  const providerId = input.provider ?? pickDefaultProviderId();
+  const provider = getProvider(providerId);
+  if (!provider.isAvailable()) {
+    return NextResponse.json(
+      {
+        error: "provider_unavailable",
+        message: provider.whyUnavailable() ?? `Provider ${providerId} is not configured.`,
+        provider: providerId,
+      },
+      { status: 424, headers: JSON_HEADERS },
+    );
+  }
 
   const ip = getClientIp(req.headers);
   const rl = await checkRateLimit(ip);
@@ -70,55 +76,51 @@ export async function POST(req: NextRequest) {
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), SOFT_TIMEOUT_MS);
 
-  let rawPng: Buffer;
+  let rawImage: Buffer;
   try {
-    rawPng = await generateImageFromText(prompt, {
+    rawImage = await provider.generateFromText(prompt, {
       aspectRatio: "1:1",
       imageSize: "1K",
       signal: abort.signal,
     });
   } catch (err) {
     clearTimeout(timer);
+    if (err instanceof ProviderError) {
+      return NextResponse.json(
+        {
+          error: err.code,
+          message: err.message,
+          provider: err.providerId,
+          ...(err.retryAfterSeconds ? { retryAfterSeconds: err.retryAfterSeconds } : {}),
+        },
+        {
+          status: providerErrorToStatus(err.code),
+          headers: {
+            ...JSON_HEADERS,
+            ...(err.retryAfterSeconds
+              ? { "Retry-After": String(err.retryAfterSeconds) }
+              : {}),
+          },
+        },
+      );
+    }
     if (abort.signal.aborted || (err instanceof DOMException && err.name === "AbortError")) {
       return NextResponse.json(
         {
-          error: "gemini_timeout",
+          error: "timeout",
           message: "Generation took longer than 50 seconds. Please try again.",
+          provider: providerId,
         },
         { status: 504, headers: JSON_HEADERS },
       );
     }
-    if (err instanceof GeminiSafetyError) {
-      return NextResponse.json(
-        {
-          error: "safety_block",
-          message: "The prompt was blocked by content safety filters.",
-          category: err.category,
-        },
-        { status: 422, headers: JSON_HEADERS },
-      );
-    }
-    if (err instanceof GeminiNoImageError) {
-      return NextResponse.json(
-        {
-          error: "no_image",
-          message: "Model returned no image. Try a more specific description.",
-        },
-        { status: 502, headers: JSON_HEADERS },
-      );
-    }
-    if (err instanceof GeminiUpstreamError) {
-      return NextResponse.json(
-        {
-          error: "upstream_unavailable",
-          message: "Image generation backend is not available. Check server configuration.",
-        },
-        { status: 502, headers: JSON_HEADERS },
-      );
-    }
-    console.error("[generate-base] gemini error:", err);
+    console.error(`[generate-base] unexpected error from ${providerId}:`, err);
     return NextResponse.json(
-      { error: "gemini_error", message: "Image generation failed." },
+      {
+        error: "upstream",
+        message: "Image generation failed.",
+        provider: providerId,
+      },
       { status: 502, headers: JSON_HEADERS },
     );
   } finally {
@@ -128,12 +130,16 @@ export async function POST(req: NextRequest) {
   let transparent: Buffer;
   let trimmed: Buffer;
   try {
-    transparent = await chromaKeyToAlpha(rawPng, input.chromaColor);
+    transparent = await chromaKeyToAlpha(rawImage, input.chromaColor, { defringe: true });
     trimmed = await trimToAlphaBoundingBox(transparent, 8);
   } catch (err) {
     console.error("[generate-base] sharp error:", err);
     return NextResponse.json(
-      { error: "image_processing_failed", message: "Failed to process the generated image." },
+      {
+        error: "image_processing_failed",
+        message: "Failed to process the generated image.",
+        provider: providerId,
+      },
       { status: 500, headers: JSON_HEADERS },
     );
   }
@@ -147,11 +153,32 @@ export async function POST(req: NextRequest) {
       width: meta.width,
       height: meta.height,
       generatedAt: new Date().toISOString(),
-      model: process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.5-flash-image",
+      model: provider.modelLabel,
+      provider: providerId,
       ppu: PPU_BY_STYLE[input.style],
       style: input.style,
     },
   };
 
   return NextResponse.json(body, { headers: JSON_HEADERS });
+}
+
+function providerErrorToStatus(code: ProviderError["code"]): number {
+  switch (code) {
+    case "safety":
+      return 422;
+    case "rate_limit":
+      return 429;
+    case "auth":
+      return 502;
+    case "timeout":
+      return 504;
+    case "no_image":
+      return 502;
+    case "unavailable":
+      return 424;
+    case "upstream":
+    default:
+      return 502;
+  }
 }

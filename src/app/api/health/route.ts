@@ -1,21 +1,18 @@
 import { NextResponse } from "next/server";
 import packageJson from "../../../../package.json";
+import { summarizeProviders } from "@/lib/providers/registry";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const providers = summarizeProviders();
   return NextResponse.json(
     {
       status: "ok",
       version: packageJson.version,
-      model: process.env.GEMINI_IMAGE_MODEL ?? "gemini-2.5-flash-image",
-      hasGeminiKey: Boolean(process.env.GEMINI_API_KEY),
       hasUpstash: Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN),
+      providers,
     },
-    {
-      headers: {
-        "Cache-Control": "no-store",
-      },
-    },
+    { headers: { "Cache-Control": "no-store" } },
   );
 }

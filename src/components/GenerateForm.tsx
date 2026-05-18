@@ -10,40 +10,89 @@ import {
   type ChromaColor,
   type BaseResponse,
 } from "@/lib/validators";
+import type { ProviderId } from "@/lib/providers/types";
 
 const STYLES: Style[] = ["pixel16", "pixel32", "cartoon", "modern"];
 
 const SESSION_KEY = "spriteCreator.baseCharacter";
+const PROVIDER_PREF_KEY = "spriteCreator.providerPref";
 
 interface PersistedBase {
   request: {
     description: string;
     style: Style;
     chromaColor: ChromaColor;
+    provider: ProviderId;
   };
   response: BaseResponse;
+}
+
+interface ProviderSummary {
+  id: ProviderId;
+  label: string;
+  modelLabel: string;
+  available: boolean;
+  whyUnavailable: string | null;
+  supportsReference: boolean;
+}
+
+interface HealthResponse {
+  providers: {
+    available: ProviderId[];
+    default: ProviderId;
+    providers: ProviderSummary[];
+  };
 }
 
 interface ApiError {
   error: string;
   message?: string;
+  provider?: ProviderId;
   issues?: { fieldErrors: Record<string, string[] | undefined> };
   scope?: "minute" | "day";
   retryAfterSeconds?: number;
 }
 
+const FALLBACK_PROVIDER: ProviderId = "pollinations";
+
 export function GenerateForm() {
   const [description, setDescription] = useState("");
   const [style, setStyle] = useState<Style>("pixel32");
   const [chromaColor, setChromaColor] = useState<ChromaColor>("#00FF00");
+  const [provider, setProvider] = useState<ProviderId>(FALLBACK_PROVIDER);
+  const [providers, setProviders] = useState<ProviderSummary[]>([]);
+  const [defaultProvider, setDefaultProvider] = useState<ProviderId>(FALLBACK_PROVIDER);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<BaseResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [accepted, setAccepted] = useState(false);
 
   useEffect(() => {
-    // Hydrate from sessionStorage on first mount. sessionStorage is browser-only,
-    // so the read cannot run during SSR — useEffect is the correct boundary here.
+    let cancelled = false;
+    async function loadHealth() {
+      try {
+        const res = await fetch("/api/health");
+        const body = (await res.json()) as HealthResponse;
+        if (cancelled) return;
+        setProviders(body.providers.providers);
+        setDefaultProvider(body.providers.default);
+        const storedPref =
+          (typeof window !== "undefined"
+            ? (window.sessionStorage.getItem(PROVIDER_PREF_KEY) as ProviderId | null)
+            : null) ?? body.providers.default;
+        const isPrefAvailable = body.providers.available.includes(storedPref);
+        setProvider(isPrefAvailable ? storedPref : body.providers.default);
+      } catch {
+        // health failed; stick with fallback
+      }
+    }
+    void loadHealth();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
     try {
       const stored = sessionStorage.getItem(SESSION_KEY);
       if (!stored) return;
@@ -52,6 +101,7 @@ export function GenerateForm() {
       setDescription(parsed.request.description);
       setStyle(parsed.request.style);
       setChromaColor(parsed.request.chromaColor);
+      if (parsed.request.provider) setProvider(parsed.request.provider);
       setResult(parsed.response);
       setAccepted(true);
       /* eslint-enable react-hooks/set-state-in-effect */
@@ -60,8 +110,18 @@ export function GenerateForm() {
     }
   }, []);
 
+  function handleProviderChange(next: ProviderId) {
+    setProvider(next);
+    try {
+      sessionStorage.setItem(PROVIDER_PREF_KEY, next);
+    } catch {
+      // sessionStorage may be unavailable in some embeds
+    }
+  }
+
   const charCount = description.trim().length;
   const canGenerate = !loading && charCount >= 10 && charCount <= 500;
+  const currentProvider = providers.find((p) => p.id === provider);
 
   async function handleGenerate() {
     setError(null);
@@ -75,6 +135,7 @@ export function GenerateForm() {
           description: description.trim(),
           style,
           chromaColor,
+          provider,
         }),
       });
       const body = (await res.json()) as BaseResponse | ApiError;
@@ -97,7 +158,7 @@ export function GenerateForm() {
   function handleAccept() {
     if (!result) return;
     const payload: PersistedBase = {
-      request: { description: description.trim(), style, chromaColor },
+      request: { description: description.trim(), style, chromaColor, provider },
       response: result,
     };
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
@@ -114,6 +175,50 @@ export function GenerateForm() {
   return (
     <div className="grid w-full max-w-5xl gap-8 lg:grid-cols-[1fr_1fr]">
       <section className="flex flex-col gap-6">
+        <div className="flex flex-col gap-2">
+          <label
+            htmlFor="provider"
+            className="text-sm font-medium text-zinc-700 dark:text-zinc-300"
+          >
+            Image provider
+          </label>
+          <select
+            id="provider"
+            value={provider}
+            onChange={(e) => handleProviderChange(e.target.value as ProviderId)}
+            className="rounded-lg border border-zinc-300 bg-white p-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+          >
+            {providers.length === 0 ? (
+              <option value={FALLBACK_PROVIDER}>Pollinations (loading…)</option>
+            ) : (
+              providers.map((p) => (
+                <option key={p.id} value={p.id} disabled={!p.available}>
+                  {p.label}
+                  {p.id === defaultProvider ? " — default" : ""}
+                  {!p.available ? " — unavailable" : ""}
+                </option>
+              ))
+            )}
+          </select>
+          {currentProvider?.whyUnavailable && !currentProvider.available && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {currentProvider.whyUnavailable}
+            </p>
+          )}
+          {currentProvider && (
+            <p className="text-xs text-zinc-500">
+              Model: <span className="font-mono">{currentProvider.modelLabel}</span>
+              {!currentProvider.supportsReference && (
+                <>
+                  {" · "}
+                  No reference-image conditioning (character identity in Phase 2 will rely on
+                  prompt + seed reuse, not native consistency).
+                </>
+              )}
+            </p>
+          )}
+        </div>
+
         <div className="flex flex-col gap-2">
           <label
             htmlFor="description"
@@ -232,11 +337,7 @@ export function GenerateForm() {
           disabled={!canGenerate}
           className="rounded-lg bg-zinc-900 py-3 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200 dark:disabled:bg-zinc-700"
         >
-          {loading
-            ? "Generating…"
-            : result
-              ? "Regenerate"
-              : "Generate base character"}
+          {loading ? "Generating…" : result ? "Regenerate" : "Generate base character"}
         </button>
       </section>
 
@@ -258,7 +359,9 @@ export function GenerateForm() {
                   aria-hidden
                   className="h-8 w-8 animate-spin rounded-full border-2 border-zinc-300 border-t-zinc-700"
                 />
-                <span>Generating with Gemini…</span>
+                <span>
+                  Generating via {currentProvider?.label.split(" (")[0] ?? provider}…
+                </span>
               </div>
             </div>
           ) : result ? (
@@ -283,13 +386,15 @@ export function GenerateForm() {
             <p className="font-medium">
               {error.error === "validation_failed"
                 ? "Validation failed"
-                : error.error === "safety_block"
+                : error.error === "safety"
                   ? "Content blocked by safety filter"
-                  : error.error === "rate_limited"
-                    ? `Rate limit hit (${error.scope})`
-                    : error.error === "gemini_timeout"
+                  : error.error === "rate_limited" || error.error === "rate_limit"
+                    ? `Rate limit hit${error.scope ? ` (${error.scope})` : ""}`
+                    : error.error === "timeout"
                       ? "Generation timed out"
-                      : "Generation failed"}
+                      : error.error === "provider_unavailable"
+                        ? "Provider not configured"
+                        : "Generation failed"}
             </p>
             {error.message && <p className="mt-1">{error.message}</p>}
             {error.retryAfterSeconds && (
@@ -316,8 +421,12 @@ export function GenerateForm() {
                 <dd>{STYLE_LABELS[result.meta.style]}</dd>
               </div>
               <div>
+                <dt className="font-medium text-zinc-500">Provider</dt>
+                <dd className="truncate">{result.meta.provider}</dd>
+              </div>
+              <div className="col-span-2">
                 <dt className="font-medium text-zinc-500">Model</dt>
-                <dd className="truncate">{result.meta.model}</dd>
+                <dd className="truncate font-mono">{result.meta.model}</dd>
               </div>
             </div>
 

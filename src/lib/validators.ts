@@ -1,10 +1,13 @@
 import { z } from "zod";
+import { PROVIDER_IDS, type ProviderId } from "@/lib/providers/types";
 
 export const StyleSchema = z.enum(["pixel16", "pixel32", "cartoon", "modern"]);
 export type Style = z.infer<typeof StyleSchema>;
 
 export const ChromaColorSchema = z.enum(["#00FF00", "#FF00FF"]);
 export type ChromaColor = z.infer<typeof ChromaColorSchema>;
+
+export const ProviderIdSchema = z.enum(PROVIDER_IDS);
 
 export const HexColorSchema = z
   .string()
@@ -19,6 +22,7 @@ export const BaseRequestSchema = z.object({
   style: StyleSchema,
   palette: z.array(HexColorSchema).max(8).optional(),
   chromaColor: ChromaColorSchema.default("#00FF00"),
+  provider: ProviderIdSchema.optional(),
 });
 export type BaseRequest = z.infer<typeof BaseRequestSchema>;
 
@@ -27,6 +31,7 @@ export interface BaseResponseMeta {
   height: number;
   generatedAt: string;
   model: string;
+  provider: ProviderId;
   ppu: number;
   style: Style;
 }
