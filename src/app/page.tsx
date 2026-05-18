@@ -1,4 +1,5 @@
 import { GenerateForm } from "@/components/GenerateForm";
+import { ActionPanel } from "@/components/ActionPanel";
 
 export default function Home() {
   return (
@@ -8,13 +9,15 @@ export default function Home() {
           Sprite Creator
         </h1>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Describe a character. Get a Unity-ready base sprite with a transparent background.
-          Action sheets (idle, walk, run, jump, attack, hurt, death) follow in Phase 2.
+          Describe a character. Get a Unity-ready base sprite with a transparent background, then
+          generate animated action sheets (idle, walk, run, jump, attack, hurt, death) and
+          download everything as a Unity-importable ZIP.
         </p>
       </div>
       <GenerateForm />
+      <ActionPanel />
       <footer className="mt-12 text-xs text-zinc-500">
-        Powered by Gemini 3.1 Flash Image · MIT licensed ·{" "}
+        Free image providers · MIT licensed ·{" "}
         <a
           className="underline underline-offset-4 hover:text-zinc-700 dark:hover:text-zinc-300"
           href="https://github.com/CarCar47/sprite-creator"

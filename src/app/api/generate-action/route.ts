@@ -1,11 +1,15 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { BaseRequestSchema, PPU_BY_STYLE } from "@/lib/validators";
-import type { BaseResponse } from "@/lib/validators";
-import { buildBasePromptFromRequest } from "@/lib/prompts/baseCharacter";
+import { ActionRequestSchema, type ActionResponse } from "@/lib/validators";
+import {
+  buildActionPromptFor,
+  GRID_BY_FRAME_COUNT,
+  type ActionPromptInput,
+} from "@/lib/prompts/actions";
 import { getProvider, pickDefaultProviderId } from "@/lib/providers/registry";
 import { ProviderError } from "@/lib/providers/types";
 import { removeBackground } from "@/lib/backgroundRemoval";
-import { trimToAlphaBoundingBox, pngMetadata } from "@/lib/imageProcessing";
+import { buildSpriteSheet } from "@/lib/spriteSheet";
+import { buildManifest } from "@/lib/manifest";
 import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -13,6 +17,31 @@ export const dynamic = "force-dynamic";
 
 const SOFT_TIMEOUT_MS = 50_000;
 const JSON_HEADERS = { "Cache-Control": "no-store" } as const;
+
+function dataUrlToBase64(dataUrl: string): string {
+  const comma = dataUrl.indexOf(",");
+  return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl;
+}
+
+function providerErrorToStatus(code: ProviderError["code"]): number {
+  switch (code) {
+    case "safety":
+      return 422;
+    case "rate_limit":
+      return 429;
+    case "auth":
+      return 502;
+    case "timeout":
+      return 504;
+    case "no_image":
+      return 502;
+    case "unavailable":
+      return 424;
+    case "upstream":
+    default:
+      return 502;
+  }
+}
 
 export async function POST(req: NextRequest) {
   let payload: unknown;
@@ -25,7 +54,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const parsed = BaseRequestSchema.safeParse(payload);
+  const parsed = ActionRequestSchema.safeParse(payload);
   if (!parsed.success) {
     return NextResponse.json(
       {
@@ -71,25 +100,42 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const prompt = buildBasePromptFromRequest(input);
-  const seed = input.seed ?? Math.floor(Math.random() * 2 ** 31);
+  const layout = GRID_BY_FRAME_COUNT[input.frameCount];
+  const promptInput: ActionPromptInput = {
+    description: input.description,
+    style: input.style,
+    chromaColor: input.chromaColor,
+    frameCount: input.frameCount,
+    palette: input.palette,
+  };
+  const prompt = buildActionPromptFor(input.action, promptInput);
 
   const abort = new AbortController();
   const timer = setTimeout(() => abort.abort(), SOFT_TIMEOUT_MS);
 
-  let rawImage: Buffer;
+  let rawGrid: Buffer;
   try {
-    rawImage = await provider.generateFromText(prompt, {
-      aspectRatio: "1:1",
-      imageSize: "1K",
-      seed,
+    const opts = {
+      aspectRatio: layout.cols === layout.rows ? ("1:1" as const) : ("1:1" as const),
+      imageSize: input.frameCount >= 9 ? ("2K" as const) : ("1K" as const),
+      seed: input.seed,
       signal: abort.signal,
-    });
+    };
+
+    if (provider.supportsReference && provider.generateFromTextAndReference) {
+      rawGrid = await provider.generateFromTextAndReference(
+        prompt,
+        { mimeType: "image/png", base64: dataUrlToBase64(input.baseImage) },
+        opts,
+      );
+    } else {
+      rawGrid = await provider.generateFromText(prompt, opts);
+    }
   } catch (err) {
     clearTimeout(timer);
     if (err instanceof ProviderError) {
       console.warn(
-        `[generate-base] provider=${err.providerId} code=${err.code} message=${err.message}`,
+        `[generate-action] provider=${err.providerId} code=${err.code} message=${err.message}`,
       );
       return NextResponse.json(
         {
@@ -119,11 +165,11 @@ export async function POST(req: NextRequest) {
         { status: 504, headers: JSON_HEADERS },
       );
     }
-    console.error(`[generate-base] unexpected error from ${providerId}:`, err);
+    console.error(`[generate-action] unexpected from ${providerId}:`, err);
     return NextResponse.json(
       {
         error: "upstream",
-        message: "Image generation failed.",
+        message: "Action sheet generation failed.",
         provider: providerId,
       },
       { status: 502, headers: JSON_HEADERS },
@@ -132,59 +178,47 @@ export async function POST(req: NextRequest) {
     clearTimeout(timer);
   }
 
-  let transparent: Buffer;
-  let trimmed: Buffer;
+  let sheetBuffer: Buffer;
+  let frameWidth: number;
+  let frameHeight: number;
   try {
-    transparent = await removeBackground(rawImage, input.chromaColor);
-    trimmed = await trimToAlphaBoundingBox(transparent, 8);
+    const transparentGrid = await removeBackground(rawGrid, input.chromaColor);
+    const built = await buildSpriteSheet(
+      transparentGrid,
+      layout.cols,
+      layout.rows,
+      8,
+    );
+    sheetBuffer = built.sheet;
+    frameWidth = built.frameWidth;
+    frameHeight = built.frameHeight;
   } catch (err) {
-    console.error("[generate-base] background-removal/sharp error:", err);
+    console.error("[generate-action] image-processing error:", err);
     return NextResponse.json(
       {
         error: "image_processing_failed",
-        message: "Failed to process the generated image.",
+        message: "Failed to slice and repack the action grid.",
         provider: providerId,
       },
       { status: 500, headers: JSON_HEADERS },
     );
   }
 
-  const meta = await pngMetadata(trimmed);
-  const dataUrl = `data:image/png;base64,${trimmed.toString("base64")}`;
+  const manifest = buildManifest({
+    frameCount: input.frameCount,
+    frameWidth,
+    frameHeight,
+    action: input.action,
+    style: input.style,
+    provider: providerId,
+    modelVersion: provider.modelLabel,
+    prompt,
+  });
 
-  const body: BaseResponse = {
-    image: dataUrl,
-    meta: {
-      width: meta.width,
-      height: meta.height,
-      generatedAt: new Date().toISOString(),
-      model: provider.modelLabel,
-      provider: providerId,
-      ppu: PPU_BY_STYLE[input.style],
-      style: input.style,
-      seed,
-    },
+  const body: ActionResponse = {
+    sheet: `data:image/png;base64,${sheetBuffer.toString("base64")}`,
+    manifest,
   };
 
   return NextResponse.json(body, { headers: JSON_HEADERS });
-}
-
-function providerErrorToStatus(code: ProviderError["code"]): number {
-  switch (code) {
-    case "safety":
-      return 422;
-    case "rate_limit":
-      return 429;
-    case "auth":
-      return 502;
-    case "timeout":
-      return 504;
-    case "no_image":
-      return 502;
-    case "unavailable":
-      return 424;
-    case "upstream":
-    default:
-      return 502;
-  }
 }
