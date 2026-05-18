@@ -133,7 +133,7 @@ export async function POST(req: NextRequest) {
   let transparent: Buffer;
   let trimmed: Buffer;
   try {
-    transparent = await removeBackground(rawImage);
+    transparent = await removeBackground(rawImage, input.chromaColor);
     trimmed = await trimToAlphaBoundingBox(transparent, 8);
   } catch (err) {
     console.error("[generate-base] background-removal/sharp error:", err);
