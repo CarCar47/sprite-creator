@@ -66,6 +66,8 @@ export function GenerateForm() {
   const [result, setResult] = useState<BaseResponse | null>(null);
   const [error, setError] = useState<ApiError | null>(null);
   const [accepted, setAccepted] = useState(false);
+  const [refining, setRefining] = useState(false);
+  const [refinementText, setRefinementText] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -123,20 +125,27 @@ export function GenerateForm() {
   const canGenerate = !loading && charCount >= 10 && charCount <= 500;
   const currentProvider = providers.find((p) => p.id === provider);
 
-  async function handleGenerate() {
+  async function handleGenerate(opts: { refine?: boolean } = {}) {
     setError(null);
     setLoading(true);
     setAccepted(false);
     try {
+      const payload: Record<string, unknown> = {
+        description: description.trim(),
+        style,
+        chromaColor,
+        provider,
+      };
+      if (opts.refine) {
+        payload.refinement = refinementText.trim();
+        if (result?.meta.seed !== undefined) {
+          payload.seed = result.meta.seed;
+        }
+      }
       const res = await fetch("/api/generate-base", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          description: description.trim(),
-          style,
-          chromaColor,
-          provider,
-        }),
+        body: JSON.stringify(payload),
       });
       const body = (await res.json()) as BaseResponse | ApiError;
       if (!res.ok) {
@@ -145,6 +154,10 @@ export function GenerateForm() {
         return;
       }
       setResult(body as BaseResponse);
+      if (opts.refine) {
+        setRefining(false);
+        setRefinementText("");
+      }
     } catch (err) {
       setError({
         error: "network_error",
@@ -333,7 +346,7 @@ export function GenerateForm() {
 
         <button
           type="button"
-          onClick={handleGenerate}
+          onClick={() => handleGenerate()}
           disabled={!canGenerate}
           className="rounded-lg bg-zinc-900 py-3 text-sm font-medium text-zinc-50 transition-colors hover:bg-zinc-800 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-50 dark:text-zinc-900 dark:hover:bg-zinc-200 dark:disabled:bg-zinc-700"
         >
@@ -455,7 +468,43 @@ export function GenerateForm() {
                   Clear accepted base
                 </button>
               )}
+              <button
+                type="button"
+                onClick={() => setRefining((r) => !r)}
+                className="rounded-md border border-zinc-300 bg-white px-3 py-1.5 font-medium text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                {refining ? "Cancel refine" : "Refine"}
+              </button>
             </div>
+
+            {refining && (
+              <div className="mt-3 flex flex-col gap-2 rounded-md border border-zinc-300 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-950">
+                <label htmlFor="refinement" className="text-xs font-medium text-zinc-700 dark:text-zinc-300">
+                  Refinement instruction
+                </label>
+                <textarea
+                  id="refinement"
+                  value={refinementText}
+                  onChange={(e) => setRefinementText(e.target.value)}
+                  rows={2}
+                  maxLength={200}
+                  placeholder="e.g. make the eyes blue instead of red, or add a small golden crown"
+                  className="w-full rounded-md border border-zinc-300 bg-white p-2 text-sm text-zinc-900 outline-none focus:border-zinc-500 dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100"
+                />
+                <p className="text-xs text-zinc-500">
+                  Re-rolls with the same seed and original description, applying just this
+                  change. Hit Accept after to lock in the refined version.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleGenerate({ refine: true })}
+                  disabled={loading || refinementText.trim().length === 0}
+                  className="self-start rounded-md bg-zinc-900 px-3 py-1.5 text-xs font-medium text-zinc-50 disabled:cursor-not-allowed disabled:bg-zinc-300 dark:bg-zinc-50 dark:text-zinc-900 dark:disabled:bg-zinc-700"
+                >
+                  {loading ? "Refining…" : "Apply refinement"}
+                </button>
+              </div>
+            )}
             {accepted && (
               <p className="mt-2 text-xs text-emerald-700 dark:text-emerald-400">
                 ✓ Saved as the project base character. Action sheets will use this in Phase 2.

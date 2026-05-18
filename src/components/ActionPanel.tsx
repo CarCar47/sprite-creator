@@ -343,6 +343,19 @@ export function ActionPanel() {
 
           {currentSheet && (
             <div className="rounded-lg border border-zinc-200 bg-zinc-50 p-3 text-xs text-zinc-700 dark:border-zinc-800 dark:bg-zinc-900 dark:text-zinc-300">
+              {currentSheet.response.manifest.frame_quality &&
+                currentSheet.response.manifest.frame_quality.some((q) => q !== "ok") && (
+                  <div className="mb-3 rounded-md border border-amber-300 bg-amber-50 p-2 text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-200">
+                    <p className="font-medium">Some frames look off.</p>
+                    <p className="mt-1">
+                      Frame quality:{" "}
+                      {currentSheet.response.manifest.frame_quality
+                        .map((q, i) => `#${i + 1} ${q.replace("_", " ")}`)
+                        .join(" · ")}
+                      . Hit Regenerate above for a cleaner roll.
+                    </p>
+                  </div>
+                )}
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <dt className="font-medium text-zinc-500">Frames</dt>

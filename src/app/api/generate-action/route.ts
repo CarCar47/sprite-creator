@@ -181,6 +181,7 @@ export async function POST(req: NextRequest) {
   let sheetBuffer: Buffer;
   let frameWidth: number;
   let frameHeight: number;
+  let frameQuality: import("@/lib/spriteSheet").FrameQuality[];
   try {
     const transparentGrid = await removeBackground(rawGrid, input.chromaColor);
     const built = await buildSpriteSheet(
@@ -192,6 +193,7 @@ export async function POST(req: NextRequest) {
     sheetBuffer = built.sheet;
     frameWidth = built.frameWidth;
     frameHeight = built.frameHeight;
+    frameQuality = built.frameQuality;
   } catch (err) {
     console.error("[generate-action] image-processing error:", err);
     return NextResponse.json(
@@ -213,6 +215,7 @@ export async function POST(req: NextRequest) {
     provider: providerId,
     modelVersion: provider.modelLabel,
     prompt,
+    frameQuality,
   });
 
   const body: ActionResponse = {

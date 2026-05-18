@@ -28,6 +28,10 @@ export const BaseRequestSchema = z.object({
   /** Optional integer seed. Useful when re-rolling with the same prompt to compare variants
    *  or for clients that want to lock in a seed for cross-action identity preservation. */
   seed: z.number().int().nonnegative().optional(),
+  /** Optional refinement clause appended after the main description ("make the eyes blue
+   *  instead of red", etc.). The seed is typically reused so non-targeted features stay
+   *  close to the previous generation. */
+  refinement: z.string().trim().max(200).optional(),
 });
 export type BaseRequest = z.infer<typeof BaseRequestSchema>;
 

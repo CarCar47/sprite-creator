@@ -157,11 +157,54 @@ export async function repackHorizontal(frames: SlicedFrame[]): Promise<Buffer> {
     .toBuffer();
 }
 
+export type FrameQuality = "ok" | "low_alpha" | "high_alpha";
+
 export interface BuiltSheet {
   sheet: Buffer;
   frameWidth: number;
   frameHeight: number;
   frameCount: number;
+  /** Per-frame quality flag based on alpha-pixel deviation from the median. */
+  frameQuality: FrameQuality[];
+}
+
+/**
+ * Count opaque pixels (alpha > 0) in a single PNG frame. Used by quality detection to
+ * spot frames whose subject is much smaller (model failed to draw the character) or
+ * much larger (model bled into the cell from neighbors) than typical.
+ */
+async function countOpaquePixels(pngBuffer: Buffer): Promise<number> {
+  const { data, info } = await sharp(pngBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true });
+  let count = 0;
+  for (let i = 3; i < data.length; i += info.channels) {
+    if (data[i]! > 0) count++;
+  }
+  return count;
+}
+
+/**
+ * Flag frames whose opaque-pixel count deviates more than ±50% from the median.
+ * Returns a parallel array of FrameQuality flags.
+ */
+async function detectFrameQuality(frames: SlicedFrame[]): Promise<FrameQuality[]> {
+  if (frames.length === 0) return [];
+  const counts = await Promise.all(frames.map((f) => countOpaquePixels(f.buffer)));
+  const sorted = [...counts].sort((a, b) => a - b);
+  const median = sorted[Math.floor(sorted.length / 2)] ?? 0;
+  if (median === 0) {
+    // Every frame empty — nothing meaningful to compare.
+    return counts.map(() => "low_alpha" as FrameQuality);
+  }
+  const lower = median * 0.5;
+  const upper = median * 1.5;
+  return counts.map<FrameQuality>((c) => {
+    if (c < lower) return "low_alpha";
+    if (c > upper) return "high_alpha";
+    return "ok";
+  });
 }
 
 /**
@@ -181,6 +224,7 @@ export async function buildSpriteSheet(
     throw new Error("buildSpriteSheet: every frame was fully transparent");
   }
   const cropped = await cropAllToBox(frames, box, padding);
+  const frameQuality = await detectFrameQuality(cropped);
   const sheet = await repackHorizontal(cropped);
   const firstMeta = await sharp(cropped[0]!.buffer).metadata();
   return {
@@ -188,5 +232,6 @@ export async function buildSpriteSheet(
     frameWidth: firstMeta.width ?? 0,
     frameHeight: firstMeta.height ?? 0,
     frameCount: cropped.length,
+    frameQuality,
   };
 }

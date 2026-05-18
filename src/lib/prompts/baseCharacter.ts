@@ -27,6 +27,7 @@ export interface BasePromptInput {
   style: Style;
   chromaColor: ChromaColor;
   palette?: string[] | undefined;
+  refinement?: string | undefined;
 }
 
 export function buildBasePrompt(input: BasePromptInput): string {
@@ -36,6 +37,10 @@ export function buildBasePrompt(input: BasePromptInput): string {
     ? `Constrain the character's colors to this palette where appropriate: ${input.palette.join(", ")}.`
     : "";
 
+  const refinementClause = input.refinement?.trim()
+    ? `Apply the following refinement to the previous version of the character (keep everything else identical): ${input.refinement.trim()}`
+    : "";
+
   return [
     `Generate a single character on a solid ${input.chromaColor} background.`,
     `Full body, front-facing, centered in the frame, with at least 4 pixels of clear background padding on every side.`,
@@ -43,6 +48,7 @@ export function buildBasePrompt(input: BasePromptInput): string {
     `Style: ${styleInstruction}`,
     paletteClause,
     `Character description: ${input.description}`,
+    refinementClause,
     `Strict negative guidance: ${NEGATIVE_GUIDANCE}.`,
     `The background must be a uniform fill of exactly ${input.chromaColor} with no shading, no noise, and no anti-aliased edges where it meets the character.`,
   ]
@@ -57,5 +63,6 @@ export function buildBasePromptFromRequest(req: BaseRequest): string {
     style: req.style,
     chromaColor: req.chromaColor,
     palette: req.palette,
+    refinement: req.refinement,
   });
 }

@@ -9,6 +9,7 @@ import {
   type Style,
 } from "@/lib/validators";
 import type { ProviderId } from "@/lib/providers/types";
+import type { FrameQuality } from "@/lib/spriteSheet";
 
 export interface SpriteManifest {
   /** Total number of frames in the horizontal strip. */
@@ -40,6 +41,11 @@ export interface SpriteManifest {
   action: ActionKey;
   /** Style key — useful when re-importing a single asset. */
   style: Style;
+  /** Per-frame quality flag. Frames marked anything but "ok" had unusually low or high
+   *  opaque-pixel counts compared to the median — usually the model failed to draw the
+   *  character (low_alpha) or bled into a neighboring cell (high_alpha). Clients can
+   *  surface this as a regenerate prompt. */
+  frame_quality?: FrameQuality[];
 }
 
 export interface ManifestInput {
@@ -51,6 +57,7 @@ export interface ManifestInput {
   provider: ProviderId;
   modelVersion: string;
   prompt: string;
+  frameQuality?: FrameQuality[];
 }
 
 export function shortPromptHash(prompt: string): string {
@@ -74,5 +81,6 @@ export function buildManifest(input: ManifestInput): SpriteManifest {
     prompt_hash: shortPromptHash(input.prompt),
     action: input.action,
     style: input.style,
+    ...(input.frameQuality ? { frame_quality: input.frameQuality } : {}),
   };
 }

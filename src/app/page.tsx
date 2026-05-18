@@ -20,6 +20,13 @@ export default function Home() {
         Free image providers · MIT licensed ·{" "}
         <a
           className="underline underline-offset-4 hover:text-zinc-700 dark:hover:text-zinc-300"
+          href="/about"
+        >
+          About
+        </a>{" "}
+        ·{" "}
+        <a
+          className="underline underline-offset-4 hover:text-zinc-700 dark:hover:text-zinc-300"
           href="https://github.com/CarCar47/sprite-creator"
         >
           github.com/CarCar47/sprite-creator
