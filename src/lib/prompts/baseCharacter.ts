@@ -56,8 +56,11 @@ export function buildBasePrompt(input: BasePromptInput): string {
     .join("\n\n");
 }
 
-/** Convenience overload that takes the full validated request. */
-export function buildBasePromptFromRequest(req: BaseRequest): string {
+/** Convenience overload that takes the relevant fields from a validated request. */
+export function buildBasePromptFromRequest(
+  req: Pick<BaseRequest, "description" | "style" | "chromaColor"> &
+    Partial<Pick<BaseRequest, "palette" | "refinement">>,
+): string {
   return buildBasePrompt({
     description: req.description,
     style: req.style,

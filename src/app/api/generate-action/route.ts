@@ -183,7 +183,7 @@ export async function POST(req: NextRequest) {
   let frameHeight: number;
   let frameQuality: import("@/lib/spriteSheet").FrameQuality[];
   try {
-    const transparentGrid = await removeBackground(rawGrid, input.chromaColor);
+    const transparentGrid = await removeBackground(rawGrid, input.chromaColor, input.bgRemoval);
     const built = await buildSpriteSheet(
       transparentGrid,
       layout.cols,

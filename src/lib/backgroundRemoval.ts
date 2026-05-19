@@ -1,7 +1,31 @@
 import { chromaKeyToAlpha, detectBackgroundColor } from "@/lib/chromaKey";
-import type { ChromaColor } from "@/lib/validators";
+import type { BgRemovalStrength, ChromaColor } from "@/lib/validators";
 
 const HINT_MATCH_THRESHOLD = 60;
+
+interface StrengthParams {
+  /** Tolerance applied when the model rendered ~ the hinted color. */
+  hintTolerance: number;
+  /** Tolerance applied when the model ignored the hint (we detected the real bg). */
+  detectedTolerance: number;
+  /** Number of 1-pixel alpha erosion passes to clean the silhouette halo. */
+  defringe: number;
+}
+
+/**
+ * Strength presets, designed so the user can dial in real-time per generation:
+ *
+ *   gentle      — minimal keying. Preserves fragile subjects whose color is near the bg
+ *                 (e.g. green dragon on green background). Some bg may remain visible.
+ *   balanced    — default. Hits the typical FLUX/Sana output sweet spot.
+ *   aggressive  — wide tolerance + extra erosion. Cleans noisy / non-uniform backgrounds
+ *                 but may hollow out thin character features (sword blades, antennae).
+ */
+const STRENGTH: Record<BgRemovalStrength, StrengthParams> = {
+  gentle: { hintTolerance: 40, detectedTolerance: 30, defringe: 0 },
+  balanced: { hintTolerance: 80, detectedTolerance: 50, defringe: 2 },
+  aggressive: { hintTolerance: 120, detectedTolerance: 80, defringe: 3 },
+};
 
 function colorDist(a: [number, number, number], b: [number, number, number]): number {
   return Math.sqrt(
@@ -20,38 +44,36 @@ function hexToRgb(hex: string): [number, number, number] {
 /**
  * Remove the background of a generated image. Returns a PNG buffer with proper alpha.
  *
- * Strategy is two-mode adaptive:
- *  - Mode A (model followed the prompt): detected corner color is close to the hint
- *    (Euclidean RGB distance < 60). Key against the hint with tolerance 80 and 2 passes
- *    of alpha erosion. This handles slight color drift the model introduces around the
- *    "pure" chroma value.
- *  - Mode B (model ignored the prompt): detected color is far from the hint. Key against
- *    the detected color with a conservative tolerance of 50 plus 2 erosion passes. The
- *    tighter tolerance protects subject pixels that may share color with the actual bg.
+ * Two-mode adaptive: detects the actual rendered bg by sampling image corners. If that
+ * sample is close to the prompt hint, we trust the hint (and use the hint tolerance);
+ * otherwise we trust the detected color (with a tighter tolerance to protect subject).
+ * The strength preset scales the tolerance + alpha-erosion passes globally for both modes.
  *
- * We avoid full semantic segmentation (@imgly, RMBG-1.4) because the available routes
- * — @imgly/background-removal-node (380 MB Vercel bundle, exceeds 300 MB limit),
- * @imgly/background-removal WASM (blob: URL rejected by Node ESM loader), and
- * onnxruntime-node based transformers.js (same 300 MB issue) — all fail on Vercel's
- * serverless function constraints.
- *
- * For typical FLUX.1-schnell output (subject centered, background near-uniform), the
- * adaptive chroma approach is within ~95% of segmentation quality at zero runtime cost.
+ * We deliberately avoid full semantic segmentation (@imgly, RMBG-1.4) — every deployable
+ * variant either exceeds Vercel's 300 MB function limit (onnxruntime-node binaries) or is
+ * incompatible with Node's ESM loader (blob: URLs in the browser-WASM variant). Adaptive
+ * chroma reaches ~95% of segmentation quality on subject-centered single-character outputs
+ * at zero runtime cost.
  */
 export async function removeBackground(
   input: Buffer,
   chromaHint: ChromaColor | string,
+  strength: BgRemovalStrength = "balanced",
 ): Promise<Buffer> {
+  const params = STRENGTH[strength];
   const detected = await detectBackgroundColor(input);
   const hintRgb = hexToRgb(chromaHint);
   const distance = colorDist(detected.rgb, hintRgb);
 
   if (distance < HINT_MATCH_THRESHOLD) {
-    // Model rendered ~the requested bg color. Tolerance can be moderate.
-    return chromaKeyToAlpha(input, chromaHint, { tolerance: 80, defringe: 2 });
+    return chromaKeyToAlpha(input, chromaHint, {
+      tolerance: params.hintTolerance,
+      defringe: params.defringe,
+    });
   }
 
-  // Model ignored the prompt; rely on the detected bg color. Tolerance must be tighter
-  // since subject pixels may happen to share color with the rendered bg.
-  return chromaKeyToAlpha(input, detected.hex, { tolerance: 50, defringe: 2 });
+  return chromaKeyToAlpha(input, detected.hex, {
+    tolerance: params.detectedTolerance,
+    defringe: params.defringe,
+  });
 }

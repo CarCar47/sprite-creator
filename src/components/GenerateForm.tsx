@@ -9,6 +9,7 @@ import {
   type Style,
   type ChromaColor,
   type BaseResponse,
+  type BgRemovalStrength,
 } from "@/lib/validators";
 import type { ProviderId } from "@/lib/providers/types";
 
@@ -23,9 +24,32 @@ interface PersistedBase {
     style: Style;
     chromaColor: ChromaColor;
     provider: ProviderId;
+    bgRemoval?: BgRemovalStrength;
   };
   response: BaseResponse;
 }
+
+const BG_REMOVAL_OPTIONS: Array<{
+  value: BgRemovalStrength;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "gentle",
+    label: "Gentle",
+    hint: "Preserves fragile subject features (thin swords, wings, antennae). Some bg may remain.",
+  },
+  {
+    value: "balanced",
+    label: "Balanced",
+    hint: "Default. Cleans typical FLUX/Sana output.",
+  },
+  {
+    value: "aggressive",
+    label: "Aggressive",
+    hint: "Maximum bg removal. May hollow out subjects whose color is near the bg.",
+  },
+];
 
 interface ProviderSummary {
   id: ProviderId;
@@ -59,6 +83,7 @@ export function GenerateForm() {
   const [description, setDescription] = useState("");
   const [style, setStyle] = useState<Style>("pixel32");
   const [chromaColor, setChromaColor] = useState<ChromaColor>("#00FF00");
+  const [bgRemoval, setBgRemoval] = useState<BgRemovalStrength>("balanced");
   const [provider, setProvider] = useState<ProviderId>(FALLBACK_PROVIDER);
   const [providers, setProviders] = useState<ProviderSummary[]>([]);
   const [defaultProvider, setDefaultProvider] = useState<ProviderId>(FALLBACK_PROVIDER);
@@ -103,6 +128,7 @@ export function GenerateForm() {
       setDescription(parsed.request.description);
       setStyle(parsed.request.style);
       setChromaColor(parsed.request.chromaColor);
+      if (parsed.request.bgRemoval) setBgRemoval(parsed.request.bgRemoval);
       if (parsed.request.provider) setProvider(parsed.request.provider);
       setResult(parsed.response);
       setAccepted(true);
@@ -134,6 +160,7 @@ export function GenerateForm() {
         description: description.trim(),
         style,
         chromaColor,
+        bgRemoval,
         provider,
       };
       if (opts.refine) {
@@ -171,7 +198,7 @@ export function GenerateForm() {
   function handleAccept() {
     if (!result) return;
     const payload: PersistedBase = {
-      request: { description: description.trim(), style, chromaColor, provider },
+      request: { description: description.trim(), style, chromaColor, provider, bgRemoval },
       response: result,
     };
     sessionStorage.setItem(SESSION_KEY, JSON.stringify(payload));
@@ -341,6 +368,35 @@ export function GenerateForm() {
           <p className="text-xs text-zinc-500">
             Use magenta when your character has prominent green elements (a green hood, green
             scales, etc.) so the chroma key won&apos;t cut into the character.
+          </p>
+        </fieldset>
+
+        <fieldset className="flex flex-col gap-2">
+          <legend className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            Background removal strength
+          </legend>
+          <div className="flex gap-2">
+            {BG_REMOVAL_OPTIONS.map((opt) => (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setBgRemoval(opt.value)}
+                className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                  bgRemoval === opt.value
+                    ? "border-zinc-900 bg-zinc-50 dark:border-zinc-50 dark:bg-zinc-900"
+                    : "border-zinc-300 dark:border-zinc-700"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-zinc-500">
+            {BG_REMOVAL_OPTIONS.find((o) => o.value === bgRemoval)?.hint}
+          </p>
+          <p className="text-xs text-zinc-500">
+            If you see the checker pattern showing through the character, switch to{" "}
+            <strong>Gentle</strong> and regenerate.
           </p>
         </fieldset>
 

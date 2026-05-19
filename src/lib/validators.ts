@@ -9,6 +9,9 @@ export type Style = z.infer<typeof StyleSchema>;
 export const ChromaColorSchema = z.enum(["#00FF00", "#FF00FF"]);
 export type ChromaColor = z.infer<typeof ChromaColorSchema>;
 
+export const BgRemovalStrengthSchema = z.enum(["gentle", "balanced", "aggressive"]);
+export type BgRemovalStrength = z.infer<typeof BgRemovalStrengthSchema>;
+
 export const ProviderIdSchema = z.enum(PROVIDER_IDS);
 
 export const HexColorSchema = z
@@ -25,6 +28,7 @@ export const BaseRequestSchema = z.object({
   palette: z.array(HexColorSchema).max(8).optional(),
   chromaColor: ChromaColorSchema.default("#00FF00"),
   provider: ProviderIdSchema.optional(),
+  bgRemoval: BgRemovalStrengthSchema.default("balanced"),
   /** Optional integer seed. Useful when re-rolling with the same prompt to compare variants
    *  or for clients that want to lock in a seed for cross-action identity preservation. */
   seed: z.number().int().nonnegative().optional(),
@@ -75,6 +79,7 @@ export const ActionRequestSchema = z.object({
   chromaColor: ChromaColorSchema.default("#00FF00"),
   palette: z.array(HexColorSchema).max(8).optional(),
   provider: ProviderIdSchema.optional(),
+  bgRemoval: BgRemovalStrengthSchema.default("balanced"),
   action: ActionKeySchema,
   frameCount: FrameCountSchema,
   baseImage: DataUrlPngSchema,

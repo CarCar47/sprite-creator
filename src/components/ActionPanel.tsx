@@ -13,6 +13,7 @@ import {
 import type {
   ActionResponse,
   BaseResponse,
+  BgRemovalStrength,
   ChromaColor,
   Style,
 } from "@/lib/validators";
@@ -28,6 +29,7 @@ interface PersistedBase {
     chromaColor: ChromaColor;
     provider: ProviderId;
     seed?: number;
+    bgRemoval?: BgRemovalStrength;
   };
   response: BaseResponse;
 }
@@ -104,6 +106,7 @@ export function ActionPanel() {
           description: base.request.description,
           style: base.request.style,
           chromaColor: base.request.chromaColor,
+          bgRemoval: base.request.bgRemoval ?? "balanced",
           provider: base.request.provider,
           action: selectedAction,
           frameCount,
