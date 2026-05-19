@@ -1,5 +1,6 @@
 import { GenerateForm } from "@/components/GenerateForm";
 import { ActionPanel } from "@/components/ActionPanel";
+import { SpriteImporter } from "@/components/SpriteImporter";
 
 export default function Home() {
   return (
@@ -11,11 +12,13 @@ export default function Home() {
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
           Describe a character. Get a Unity-ready base sprite with a transparent background, then
           generate animated action sheets (idle, walk, run, jump, attack, hurt, death) and
-          download everything as a Unity-importable ZIP.
+          download everything as a Unity-importable ZIP. Already have your own sprite sheet?
+          Scroll to the bottom to package it for Unity.
         </p>
       </div>
       <GenerateForm />
       <ActionPanel />
+      <SpriteImporter />
       <footer className="mt-12 text-xs text-zinc-500">
         Free image providers · MIT licensed ·{" "}
         <a

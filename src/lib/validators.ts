@@ -108,6 +108,53 @@ export interface ActionResponse {
 
 export type { ActionKey };
 
+// ───── Sprite Importer ─────
+
+const DataUrlAnyImageSchema = z
+  .string()
+  .regex(
+    /^data:image\/(png|jpeg|jpg|webp);base64,[A-Za-z0-9+/=]+$/,
+    "must be a data:image/* base64 URL",
+  );
+
+export const ImportRowSchema = z.object({
+  action: z
+    .string()
+    .trim()
+    .min(1, "action label required")
+    .max(40, "action label max 40 characters")
+    .regex(/^[a-zA-Z0-9_\- ]+$/, "letters, numbers, dash, underscore, space only"),
+  fpsOverride: z.number().int().min(1).max(60).optional(),
+  pivot: z
+    .object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+    })
+    .optional(),
+});
+
+export const ImportRequestSchema = z.object({
+  image: DataUrlAnyImageSchema,
+  rows: z.number().int().min(1).max(12),
+  cols: z.number().int().min(1).max(32),
+  style: StyleSchema.default("pixel32"),
+  applyBackgroundRemoval: z.boolean().default(false),
+  chromaColor: ChromaColorSchema.default("#00FF00"),
+  bgRemoval: BgRemovalStrengthSchema.default("balanced"),
+  rowLabels: z.array(ImportRowSchema).min(1).max(12),
+});
+export type ImportRequest = z.infer<typeof ImportRequestSchema>;
+
+export interface ImportedRow {
+  action: string;
+  sheet: string;
+  manifest: import("@/lib/manifest").SpriteManifest;
+}
+
+export interface ImportResponse {
+  rows: ImportedRow[];
+}
+
 export const STYLE_LABELS: Record<Style, string> = {
   pixel16: "Pixel Art 16-bit",
   pixel32: "Pixel Art 32-bit",

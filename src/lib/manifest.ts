@@ -31,14 +31,17 @@ export interface SpriteManifest {
   filter_mode_hint: "Point" | "Bilinear";
   /** ISO timestamp the sheet was generated. */
   generated_at: string;
-  /** Provider-reported model id (e.g. "black-forest-labs/FLUX.1-schnell"). */
+  /** Provider-reported model id (e.g. "black-forest-labs/FLUX.1-schnell"), or
+   *  "imported" for sheets packaged from a user-uploaded image. */
   model_version: string;
-  /** Provider id (huggingface | pollinations | gemini). */
-  provider: ProviderId;
+  /** Provider id (huggingface | pollinations | gemini), or "import" for sheets packaged
+   *  from a user-uploaded image rather than AI-generated. */
+  provider: ProviderId | "import";
   /** SHA-256 (first 16 hex chars) of the full prompt used for traceability. The full prompt itself is never logged. */
   prompt_hash: string;
-  /** Action key — included so a user can re-import a single JSON and know which clip it belongs to. */
-  action: ActionKey;
+  /** Action label. May be one of the 7 standard ActionKey values OR a free-text custom
+   *  action name from the sprite importer feature (e.g. "shield_attack", "protection_spell"). */
+  action: ActionKey | string;
   /** Style key — useful when re-importing a single asset. */
   style: Style;
   /** Per-frame quality flag. Frames marked anything but "ok" had unusually low or high
@@ -52,12 +55,14 @@ export interface ManifestInput {
   frameCount: number;
   frameWidth: number;
   frameHeight: number;
-  action: ActionKey;
+  action: ActionKey | string;
   style: Style;
-  provider: ProviderId;
+  provider: ProviderId | "import";
   modelVersion: string;
   prompt: string;
   frameQuality?: FrameQuality[];
+  fpsOverride?: number;
+  pivotOverride?: { x: number; y: number };
 }
 
 export function shortPromptHash(prompt: string): string {
@@ -65,22 +70,37 @@ export function shortPromptHash(prompt: string): string {
 }
 
 export function buildManifest(input: ManifestInput): SpriteManifest {
+  const standardFps = isStandardAction(input.action)
+    ? DEFAULT_FPS_BY_ACTION[input.action]
+    : 8;
   return {
     frame_count: input.frameCount,
     frame_width: input.frameWidth,
     frame_height: input.frameHeight,
     columns: input.frameCount,
     rows: 1,
-    fps: DEFAULT_FPS_BY_ACTION[input.action],
-    pivot: { x: 0.5, y: 0.5 },
+    fps: input.fpsOverride ?? standardFps,
+    pivot: input.pivotOverride ?? { x: 0.5, y: 0.5 },
     pixels_per_unit: PPU_BY_STYLE[input.style],
     filter_mode_hint: FILTER_MODE_BY_STYLE[input.style],
     generated_at: new Date().toISOString(),
     model_version: input.modelVersion,
-    provider: input.provider,
+    provider: input.provider as SpriteManifest["provider"],
     prompt_hash: shortPromptHash(input.prompt),
     action: input.action,
     style: input.style,
     ...(input.frameQuality ? { frame_quality: input.frameQuality } : {}),
   };
+}
+
+function isStandardAction(action: string): action is ActionKey {
+  return (
+    action === "idle" ||
+    action === "walk" ||
+    action === "run" ||
+    action === "jump" ||
+    action === "attack" ||
+    action === "hurt" ||
+    action === "death"
+  );
 }
