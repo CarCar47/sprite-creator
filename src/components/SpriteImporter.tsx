@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ACTION_KEYS,
   ACTION_LABELS,
@@ -13,6 +13,7 @@ import {
   type ImportResponse,
   type Style,
 } from "@/lib/validators";
+import { detectRowsFromAlpha, fallbackEqualRows } from "@/lib/spriteAnalysis";
 
 const STYLES: Style[] = ["pixel16", "pixel32", "cartoon", "modern"];
 const BG_STRENGTHS: BgRemovalStrength[] = [
@@ -23,8 +24,10 @@ const BG_STRENGTHS: BgRemovalStrength[] = [
   "aggressive",
 ];
 
-interface RowLabel {
+interface RowSpec {
   action: string;
+  rect: { x: number; y: number; width: number; height: number };
+  frameCount: number;
   fpsOverride?: number;
 }
 
@@ -33,80 +36,246 @@ interface ApiError {
   message?: string;
 }
 
+const ROW_COLORS = [
+  "#ef4444",
+  "#f59e0b",
+  "#10b981",
+  "#3b82f6",
+  "#a855f7",
+  "#ec4899",
+  "#14b8a6",
+  "#84cc16",
+  "#f97316",
+  "#06b6d4",
+];
+
 export function SpriteImporter() {
   const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
-  const [imageSize, setImageSize] = useState<{ w: number; h: number } | null>(null);
-  const [rows, setRows] = useState(1);
-  const [cols, setCols] = useState(4);
+  const [imageEl, setImageEl] = useState<HTMLImageElement | null>(null);
   const [style, setStyle] = useState<Style>("pixel32");
   const [applyBg, setApplyBg] = useState(false);
   const [bgRemoval, setBgRemoval] = useState<BgRemovalStrength>("balanced");
-  const [rowLabels, setRowLabels] = useState<RowLabel[]>([{ action: "idle" }]);
+  const [rows, setRows] = useState<RowSpec[]>([]);
+  const [activeRow, setActiveRow] = useState<number | null>(null);
+  const [drag, setDrag] = useState<{ x: number; y: number } | null>(null);
+  const [dragCurrent, setDragCurrent] = useState<{ x: number; y: number } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [result, setResult] = useState<ImportedRow[] | null>(null);
   const [zipping, setZipping] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
+  // Load uploaded image into an Image element so we can both draw it and analyze pixels.
+  // setImageEl in an effect is the right pattern here: an HTMLImageElement is an external
+  // browser resource that can only be constructed in a browser context, and its onload is
+  // async. There is no synchronous derivation possible.
   useEffect(() => {
-    // Resize the per-row labels array to match the user's row count. setState in an
-    // effect is the standard pattern when a derived array needs to track an input value
-    // while preserving any edits the user made to surviving entries.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setRowLabels((prev) => {
-      if (prev.length === rows) return prev;
-      if (prev.length < rows) {
-        const next = [...prev];
-        while (next.length < rows) next.push({ action: "" });
-        return next;
-      }
-      return prev.slice(0, rows);
-    });
-  }, [rows]);
+    if (!imageDataUrl) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setImageEl(null);
+      return;
+    }
+    const img = new Image();
+    img.onload = () => setImageEl(img);
+    img.onerror = () => {
+      setError({
+        error: "image_load_failed",
+        message: "Could not read that image. Try a different file.",
+      });
+      setImageEl(null);
+    };
+    img.src = imageDataUrl;
+  }, [imageDataUrl]);
 
-  async function handleFile(file: File) {
+  // Whenever the image, rows, or in-progress drag change, repaint the canvas.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas || !imageEl) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const maxW = 600;
+    const scale = Math.min(1, maxW / imageEl.naturalWidth);
+    canvas.width = Math.round(imageEl.naturalWidth * scale);
+    canvas.height = Math.round(imageEl.naturalHeight * scale);
+    canvas.dataset.scale = String(scale);
+
+    ctx.imageSmoothingEnabled = false;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(imageEl, 0, 0, canvas.width, canvas.height);
+
+    rows.forEach((row, i) => {
+      const color = ROW_COLORS[i % ROW_COLORS.length]!;
+      const x = row.rect.x * scale;
+      const y = row.rect.y * scale;
+      const w = row.rect.width * scale;
+      const h = row.rect.height * scale;
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(x + 1, y + 1, Math.max(1, w - 2), Math.max(1, h - 2));
+      ctx.fillStyle = color;
+      ctx.fillRect(x + 1, y + 1, 60, 18);
+      ctx.fillStyle = "#ffffff";
+      ctx.font = "12px ui-sans-serif, system-ui, sans-serif";
+      ctx.fillText(`Row ${i + 1}`, x + 5, y + 14);
+    });
+
+    if (drag && dragCurrent && activeRow !== null) {
+      const color = ROW_COLORS[activeRow % ROW_COLORS.length]!;
+      ctx.strokeStyle = color;
+      ctx.setLineDash([4, 4]);
+      ctx.lineWidth = 2;
+      const dx = Math.min(drag.x, dragCurrent.x);
+      const dy = Math.min(drag.y, dragCurrent.y);
+      const dw = Math.abs(dragCurrent.x - drag.x);
+      const dh = Math.abs(dragCurrent.y - drag.y);
+      ctx.strokeRect(dx, dy, dw, dh);
+      ctx.setLineDash([]);
+    }
+  }, [imageEl, rows, drag, dragCurrent, activeRow]);
+
+  function handleFile(file: File) {
     setError(null);
     setResult(null);
+    setRows([]);
+    setActiveRow(null);
     if (!/^image\/(png|jpeg|jpg|webp)$/.test(file.type)) {
       setError({ error: "invalid_file", message: "Pick a PNG, JPEG, or WEBP image." });
       return;
     }
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const r = new FileReader();
-      r.onload = () => resolve(r.result as string);
-      r.onerror = () => reject(r.error);
-      r.readAsDataURL(file);
-    });
-    const img = new Image();
-    img.onload = () => {
-      setImageSize({ w: img.naturalWidth, h: img.naturalHeight });
-    };
-    img.src = dataUrl;
-    setImageDataUrl(dataUrl);
+    const reader = new FileReader();
+    reader.onload = () => setImageDataUrl(reader.result as string);
+    reader.onerror = () =>
+      setError({ error: "read_failed", message: "Could not read the file." });
+    reader.readAsDataURL(file);
   }
 
   function handleDrop(e: React.DragEvent<HTMLDivElement>) {
     e.preventDefault();
     const file = e.dataTransfer.files[0];
-    if (file) void handleFile(file);
+    if (file) handleFile(file);
   }
 
-  const cellSize = useMemo(() => {
-    if (!imageSize) return null;
-    return { w: imageSize.w / cols, h: imageSize.h / rows };
-  }, [imageSize, rows, cols]);
+  async function handleAutoDetect() {
+    if (!imageEl) return;
+    setError(null);
+    try {
+      const detected = await detectRowsFromAlpha(imageEl);
+      const useRows =
+        detected.length > 0
+          ? detected
+          : fallbackEqualRows(imageEl.naturalHeight, 5, 4);
+      const next: RowSpec[] = useRows.map((d, i) => ({
+        action: rows[i]?.action ?? "",
+        rect: {
+          x: 0,
+          y: d.top,
+          width: imageEl.naturalWidth,
+          height: d.bottom - d.top,
+        },
+        frameCount: d.frameCount,
+        fpsOverride: rows[i]?.fpsOverride,
+      }));
+      setRows(next);
+      setActiveRow(null);
+    } catch (err) {
+      setError({
+        error: "auto_detect_failed",
+        message: err instanceof Error ? err.message : "Could not analyze the image.",
+      });
+    }
+  }
 
-  const dimensionsValid = useMemo(() => {
-    if (!imageSize) return false;
-    return imageSize.w % cols === 0 && imageSize.h % rows === 0;
-  }, [imageSize, rows, cols]);
+  function handleAddRow() {
+    if (!imageEl) return;
+    const lastBottom =
+      rows.length > 0 ? rows[rows.length - 1]!.rect.y + rows[rows.length - 1]!.rect.height : 0;
+    const remainingHeight = Math.max(20, imageEl.naturalHeight - lastBottom);
+    const newRow: RowSpec = {
+      action: "",
+      rect: {
+        x: 0,
+        y: lastBottom,
+        width: imageEl.naturalWidth,
+        height: Math.min(remainingHeight, Math.floor(imageEl.naturalHeight / 5)),
+      },
+      frameCount: 4,
+    };
+    setRows((prev) => [...prev, newRow]);
+    setActiveRow(rows.length);
+  }
+
+  function handleRemoveRow(idx: number) {
+    setRows((prev) => prev.filter((_, i) => i !== idx));
+    setActiveRow(null);
+  }
+
+  function getCanvasMouse(e: React.MouseEvent<HTMLCanvasElement>) {
+    const canvas = canvasRef.current!;
+    const rect = canvas.getBoundingClientRect();
+    return {
+      x: e.clientX - rect.left,
+      y: e.clientY - rect.top,
+    };
+  }
+
+  function onMouseDown(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (activeRow === null) return;
+    setDrag(getCanvasMouse(e));
+    setDragCurrent(getCanvasMouse(e));
+  }
+  function onMouseMove(e: React.MouseEvent<HTMLCanvasElement>) {
+    if (drag === null) return;
+    setDragCurrent(getCanvasMouse(e));
+  }
+  const onMouseUp = useCallback(
+    (e: React.MouseEvent<HTMLCanvasElement>) => {
+      if (drag === null || activeRow === null || !imageEl) {
+        setDrag(null);
+        setDragCurrent(null);
+        return;
+      }
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const scale = parseFloat(canvas.dataset.scale ?? "1");
+      const end = getCanvasMouse(e);
+      const x = Math.min(drag.x, end.x);
+      const y = Math.min(drag.y, end.y);
+      const w = Math.abs(end.x - drag.x);
+      const h = Math.abs(end.y - drag.y);
+      if (w < 4 || h < 4) {
+        setDrag(null);
+        setDragCurrent(null);
+        return;
+      }
+      const imgX = Math.max(0, Math.round(x / scale));
+      const imgY = Math.max(0, Math.round(y / scale));
+      const imgW = Math.min(imageEl.naturalWidth - imgX, Math.round(w / scale));
+      const imgH = Math.min(imageEl.naturalHeight - imgY, Math.round(h / scale));
+      setRows((prev) =>
+        prev.map((r, i) =>
+          i === activeRow
+            ? { ...r, rect: { x: imgX, y: imgY, width: imgW, height: imgH } }
+            : r,
+        ),
+      );
+      setActiveRow(null);
+      setDrag(null);
+      setDragCurrent(null);
+    },
+    [drag, activeRow, imageEl],
+  );
+
+  function updateRow(idx: number, patch: Partial<RowSpec>) {
+    setRows((prev) => prev.map((r, i) => (i === idx ? { ...r, ...patch } : r)));
+  }
 
   const canSubmit =
     !loading &&
     imageDataUrl !== null &&
-    dimensionsValid &&
-    rowLabels.length === rows &&
-    rowLabels.every((r) => r.action.trim().length >= 1);
+    rows.length > 0 &&
+    rows.every((r) => r.action.trim().length > 0 && r.rect.width > 0 && r.rect.height > 0);
 
   async function handleSubmit() {
     if (!imageDataUrl) return;
@@ -119,13 +288,13 @@ export function SpriteImporter() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           image: imageDataUrl,
-          rows,
-          cols,
           style,
           applyBackgroundRemoval: applyBg,
           bgRemoval,
-          rowLabels: rowLabels.map((r) => ({
+          rows: rows.map((r) => ({
             action: r.action.trim(),
+            rect: r.rect,
+            frameCount: r.frameCount,
             ...(r.fpsOverride ? { fpsOverride: r.fpsOverride } : {}),
           })),
         }),
@@ -180,20 +349,21 @@ export function SpriteImporter() {
           Already have a sprite sheet? Package it for Unity
         </h2>
         <p className="text-sm text-zinc-600 dark:text-zinc-400">
-          Drop in a sprite sheet you made elsewhere. Specify its grid (rows × frames-per-row),
-          label each row with the action it represents, and the system slices, uniform-crops,
-          repacks each row as a horizontal strip, and bundles everything with Unity-importable
-          manifests in one ZIP. No AI generation — just packaging.
+          Drop in a sprite sheet of any size. Hit <strong>Auto-detect rows</strong> for the
+          common case where rows are separated by transparent gutters, or click{" "}
+          <strong>Draw region</strong> on a row and drag a rectangle over the part of the
+          image that row should cover. No cropping required — the importer slices only what
+          you outline.
         </p>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[1fr_1fr]">
+      <div className="grid gap-6 lg:grid-cols-[2fr_3fr]">
         <div className="flex flex-col gap-4">
           <div
             onClick={() => fileInputRef.current?.click()}
             onDragOver={(e) => e.preventDefault()}
             onDrop={handleDrop}
-            className="flex h-48 cursor-pointer flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed border-zinc-300 bg-white text-sm text-zinc-600 hover:border-zinc-500 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
+            className="flex h-32 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border-2 border-dashed border-zinc-300 bg-white text-sm text-zinc-600 hover:border-zinc-500 hover:text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-400 dark:hover:text-zinc-100"
           >
             <input
               ref={fileInputRef}
@@ -202,14 +372,14 @@ export function SpriteImporter() {
               hidden
               onChange={(e) => {
                 const f = e.target.files?.[0];
-                if (f) void handleFile(f);
+                if (f) handleFile(f);
               }}
             />
             {imageDataUrl ? (
               <>
                 <span className="font-medium">Replace image</span>
                 <span className="text-xs">
-                  {imageSize ? `${imageSize.w} × ${imageSize.h}px` : ""}
+                  {imageEl ? `${imageEl.naturalWidth} × ${imageEl.naturalHeight}px` : ""}
                 </span>
               </>
             ) : (
@@ -220,41 +390,23 @@ export function SpriteImporter() {
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
-              Rows (actions)
-              <input
-                type="number"
-                min={1}
-                max={12}
-                value={rows}
-                onChange={(e) => setRows(Math.max(1, Math.min(12, +e.target.value || 1)))}
-                className="rounded-md border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              />
-            </label>
-            <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
-              Frames per row
-              <input
-                type="number"
-                min={1}
-                max={32}
-                value={cols}
-                onChange={(e) => setCols(Math.max(1, Math.min(32, +e.target.value || 1)))}
-                className="rounded-md border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-              />
-            </label>
-          </div>
-
-          {imageSize && (
-            <p
-              className={`text-xs ${
-                dimensionsValid ? "text-zinc-500" : "text-amber-700 dark:text-amber-400"
-              }`}
-            >
-              {dimensionsValid
-                ? `Each cell will be ${cellSize?.w} × ${cellSize?.h}px (image ${imageSize.w} × ${imageSize.h} divided evenly).`
-                : `Image (${imageSize.w} × ${imageSize.h}) is not evenly divisible by ${cols} cols × ${rows} rows. Adjust the numbers or crop the image first.`}
-            </p>
+          {imageEl && (
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={handleAutoDetect}
+                className="flex-1 rounded-md bg-zinc-900 px-3 py-2 text-sm font-medium text-zinc-50 dark:bg-zinc-50 dark:text-zinc-900"
+              >
+                Auto-detect rows
+              </button>
+              <button
+                type="button"
+                onClick={handleAddRow}
+                className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-900 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100"
+              >
+                + Add empty row
+              </button>
+            </div>
           )}
 
           <label className="flex flex-col gap-1 text-sm text-zinc-700 dark:text-zinc-300">
@@ -301,7 +453,7 @@ export function SpriteImporter() {
 
           <fieldset className="flex flex-col gap-2">
             <legend className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
-              Label each row
+              Rows ({rows.length})
             </legend>
             <datalist id="standard-actions">
               {ACTION_KEYS.map((a: ActionKey) => (
@@ -311,52 +463,92 @@ export function SpriteImporter() {
               ))}
             </datalist>
             <div className="flex flex-col gap-2">
-              {rowLabels.map((label, i) => (
-                <div key={i} className="flex items-center gap-2">
-                  <span className="w-14 text-xs text-zinc-500">Row {i + 1}</span>
-                  <input
-                    type="text"
-                    list="standard-actions"
-                    value={label.action}
-                    onChange={(e) =>
-                      setRowLabels((prev) =>
-                        prev.map((r, idx) =>
-                          idx === i ? { ...r, action: e.target.value } : r,
-                        ),
-                      )
-                    }
-                    placeholder="e.g. attack, shield_attack, protection_spell"
-                    className="flex-1 rounded-md border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-                  />
-                  <input
-                    type="number"
-                    min={1}
-                    max={60}
-                    value={label.fpsOverride ?? ""}
-                    onChange={(e) =>
-                      setRowLabels((prev) =>
-                        prev.map((r, idx) =>
-                          idx === i
-                            ? {
-                                ...r,
-                                fpsOverride: e.target.value ? +e.target.value : undefined,
-                              }
-                            : r,
-                        ),
-                      )
-                    }
-                    placeholder="fps"
-                    className="w-20 rounded-md border border-zinc-300 bg-white p-2 text-sm dark:border-zinc-700 dark:bg-zinc-900"
-                  />
+              {rows.map((row, i) => (
+                <div
+                  key={i}
+                  className="flex flex-col gap-2 rounded-md border border-zinc-200 p-2 dark:border-zinc-800"
+                >
+                  <div className="flex items-center gap-2">
+                    <span
+                      className="inline-block h-3 w-3 rounded"
+                      style={{ backgroundColor: ROW_COLORS[i % ROW_COLORS.length] }}
+                    />
+                    <span className="text-xs font-medium text-zinc-500">Row {i + 1}</span>
+                    <input
+                      type="text"
+                      list="standard-actions"
+                      value={row.action}
+                      onChange={(e) => updateRow(i, { action: e.target.value })}
+                      placeholder="action name"
+                      className="flex-1 rounded-md border border-zinc-300 bg-white p-1.5 text-sm dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => handleRemoveRow(i)}
+                      className="rounded-md px-2 py-1 text-xs text-red-700 hover:bg-red-50 dark:text-red-400 dark:hover:bg-red-950"
+                      aria-label={`Remove row ${i + 1}`}
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2 text-xs text-zinc-500">
+                    <span>
+                      rect: {row.rect.x},{row.rect.y} {row.rect.width}×{row.rect.height}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setActiveRow(activeRow === i ? null : i)}
+                      className={`rounded-md border px-2 py-1 transition-colors ${
+                        activeRow === i
+                          ? "border-zinc-900 bg-zinc-900 text-zinc-50 dark:border-zinc-50 dark:bg-zinc-50 dark:text-zinc-900"
+                          : "border-zinc-300 hover:bg-zinc-50 dark:border-zinc-700 dark:hover:bg-zinc-900"
+                      }`}
+                    >
+                      {activeRow === i ? "Drawing… click image" : "Draw region"}
+                    </button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="flex items-center gap-1 text-xs text-zinc-700 dark:text-zinc-300">
+                      frames
+                      <input
+                        type="number"
+                        min={1}
+                        max={32}
+                        value={row.frameCount}
+                        onChange={(e) =>
+                          updateRow(i, {
+                            frameCount: Math.max(1, Math.min(32, +e.target.value || 1)),
+                          })
+                        }
+                        className="w-16 rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                      />
+                    </label>
+                    <label className="flex items-center gap-1 text-xs text-zinc-700 dark:text-zinc-300">
+                      fps
+                      <input
+                        type="number"
+                        min={1}
+                        max={60}
+                        value={row.fpsOverride ?? ""}
+                        onChange={(e) =>
+                          updateRow(i, {
+                            fpsOverride: e.target.value ? +e.target.value : undefined,
+                          })
+                        }
+                        placeholder="auto"
+                        className="w-16 rounded-md border border-zinc-300 bg-white p-1 dark:border-zinc-700 dark:bg-zinc-900"
+                      />
+                    </label>
+                  </div>
                 </div>
               ))}
+              {rows.length === 0 && imageEl && (
+                <p className="text-xs text-zinc-500">
+                  No rows yet. Click <strong>Auto-detect rows</strong> above to find them, or
+                  click <strong>+ Add empty row</strong> and draw a rectangle on the image.
+                </p>
+              )}
             </div>
-            <p className="text-xs text-zinc-500">
-              Pick a standard action from the suggestions, or type any custom name (letters,
-              numbers, dash, underscore, space). FPS defaults to the standard value for that
-              action (or 8 for custom). Override per-row if your sheet has a specific
-              playback speed in mind.
-            </p>
           </fieldset>
 
           <button
@@ -370,9 +562,13 @@ export function SpriteImporter() {
         </div>
 
         <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Preview</h3>
+          <h3 className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+            {activeRow !== null
+              ? `Drawing region for Row ${activeRow + 1} — click and drag on the image`
+              : "Preview (rows shown as colored rectangles)"}
+          </h3>
           <div
-            className="aspect-square w-full overflow-hidden rounded-lg border border-zinc-300 bg-zinc-50 dark:border-zinc-700 dark:bg-zinc-900"
+            className="overflow-hidden rounded-lg border border-zinc-300 dark:border-zinc-700"
             style={{
               backgroundImage:
                 "linear-gradient(45deg, #e5e5e5 25%, transparent 25%), linear-gradient(-45deg, #e5e5e5 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #e5e5e5 75%), linear-gradient(-45deg, transparent 75%, #e5e5e5 75%)",
@@ -380,15 +576,20 @@ export function SpriteImporter() {
               backgroundPosition: "0 0, 0 10px, 10px -10px, 10px 0",
             }}
           >
-            {imageDataUrl ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={imageDataUrl}
-                alt="Uploaded sprite sheet"
-                className="h-full w-full object-contain"
+            {imageEl ? (
+              <canvas
+                ref={canvasRef}
+                className={`block w-full ${activeRow !== null ? "cursor-crosshair" : "cursor-default"}`}
+                onMouseDown={onMouseDown}
+                onMouseMove={onMouseMove}
+                onMouseUp={onMouseUp}
+                onMouseLeave={() => {
+                  setDrag(null);
+                  setDragCurrent(null);
+                }}
               />
             ) : (
-              <div className="flex h-full items-center justify-center text-sm text-zinc-500">
+              <div className="flex aspect-square w-full items-center justify-center text-sm text-zinc-500">
                 Your uploaded sheet appears here.
               </div>
             )}
@@ -425,9 +626,8 @@ export function SpriteImporter() {
                   >
                     <div className="font-medium">{r.action}</div>
                     <div className="text-zinc-500">
-                      {r.manifest.frame_count} frames @{" "}
-                      {r.manifest.frame_width}×{r.manifest.frame_height}px, fps{" "}
-                      {r.manifest.fps}
+                      {r.manifest.frame_count} frames @ {r.manifest.frame_width}×
+                      {r.manifest.frame_height}px, fps {r.manifest.fps}
                     </div>
                   </li>
                 ))}

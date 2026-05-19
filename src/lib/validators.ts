@@ -117,6 +117,14 @@ const DataUrlAnyImageSchema = z
     "must be a data:image/* base64 URL",
   );
 
+export const ImportRectSchema = z.object({
+  x: z.number().int().min(0),
+  y: z.number().int().min(0),
+  width: z.number().int().min(1),
+  height: z.number().int().min(1),
+});
+export type ImportRect = z.infer<typeof ImportRectSchema>;
+
 export const ImportRowSchema = z.object({
   action: z
     .string()
@@ -124,6 +132,8 @@ export const ImportRowSchema = z.object({
     .min(1, "action label required")
     .max(40, "action label max 40 characters")
     .regex(/^[a-zA-Z0-9_\- ]+$/, "letters, numbers, dash, underscore, space only"),
+  rect: ImportRectSchema,
+  frameCount: z.number().int().min(1).max(32),
   fpsOverride: z.number().int().min(1).max(60).optional(),
   pivot: z
     .object({
@@ -135,13 +145,11 @@ export const ImportRowSchema = z.object({
 
 export const ImportRequestSchema = z.object({
   image: DataUrlAnyImageSchema,
-  rows: z.number().int().min(1).max(12),
-  cols: z.number().int().min(1).max(32),
   style: StyleSchema.default("pixel32"),
   applyBackgroundRemoval: z.boolean().default(false),
   chromaColor: ChromaColorSchema.default("#00FF00"),
   bgRemoval: BgRemovalStrengthSchema.default("balanced"),
-  rowLabels: z.array(ImportRowSchema).min(1).max(12),
+  rows: z.array(ImportRowSchema).min(1).max(20),
 });
 export type ImportRequest = z.infer<typeof ImportRequestSchema>;
 

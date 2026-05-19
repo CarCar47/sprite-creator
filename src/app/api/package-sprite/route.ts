@@ -61,16 +61,6 @@ async function handle(req: NextRequest) {
   }
   const input = parsed.data;
 
-  if (input.rowLabels.length !== input.rows) {
-    return NextResponse.json(
-      {
-        error: "validation_failed",
-        message: `rowLabels length (${input.rowLabels.length}) must equal rows (${input.rows}).`,
-      },
-      { status: 400, headers: JSON_HEADERS },
-    );
-  }
-
   const ip = getClientIp(req.headers);
   const rl = await checkRateLimit(ip);
   if (!rl.ok) {
@@ -93,7 +83,6 @@ async function handle(req: NextRequest) {
 
   let source = dataUrlToBuffer(input.image);
 
-  // Normalize to PNG with alpha + ensure we know the dimensions.
   let meta: sharp.Metadata;
   try {
     source = await sharp(source).ensureAlpha().png({ compressionLevel: 9 }).toBuffer();
@@ -109,19 +98,30 @@ async function handle(req: NextRequest) {
     );
   }
 
-  const totalW = meta.width ?? 0;
-  const totalH = meta.height ?? 0;
-  if (totalW % input.cols !== 0 || totalH % input.rows !== 0) {
-    return NextResponse.json(
-      {
-        error: "grid_mismatch",
-        message: `Image is ${totalW}×${totalH}, not evenly divisible by ${input.cols} cols × ${input.rows} rows. Try different row/col counts, or crop your image to a multiple of those dimensions.`,
-      },
-      { status: 400, headers: JSON_HEADERS },
-    );
+  const imgW = meta.width ?? 0;
+  const imgH = meta.height ?? 0;
+
+  // Validate each row's rect lies fully within the image bounds.
+  for (let i = 0; i < input.rows.length; i++) {
+    const row = input.rows[i]!;
+    const r = row.rect;
+    if (
+      r.x + r.width > imgW ||
+      r.y + r.height > imgH ||
+      r.x < 0 ||
+      r.y < 0 ||
+      r.width < 1 ||
+      r.height < 1
+    ) {
+      return NextResponse.json(
+        {
+          error: "rect_out_of_bounds",
+          message: `Row ${i + 1} ("${row.action}") rectangle (${r.x},${r.y} ${r.width}×${r.height}) is outside the image bounds (${imgW}×${imgH}).`,
+        },
+        { status: 400, headers: JSON_HEADERS },
+      );
+    }
   }
-  const cellW = totalW / input.cols;
-  const cellH = totalH / input.rows;
 
   if (input.applyBackgroundRemoval) {
     try {
@@ -140,32 +140,68 @@ async function handle(req: NextRequest) {
 
   const importedRows: ImportedRow[] = [];
 
-  for (let rowIdx = 0; rowIdx < input.rows; rowIdx++) {
-    const label = input.rowLabels[rowIdx]!;
+  for (let rowIdx = 0; rowIdx < input.rows.length; rowIdx++) {
+    const row = input.rows[rowIdx]!;
+    const r = row.rect;
+
+    // Extract the row's region from the source image.
+    let rowBuffer: Buffer;
+    try {
+      rowBuffer = await sharp(source)
+        .extract({ left: r.x, top: r.y, width: r.width, height: r.height })
+        .png({ compressionLevel: 9 })
+        .toBuffer();
+    } catch (err) {
+      console.error(`[package-sprite] row ${rowIdx} extract error:`, err);
+      return NextResponse.json(
+        {
+          error: "image_processing_failed",
+          message: `Failed to extract row ${rowIdx + 1} ("${row.action}"): ${err instanceof Error ? err.message : String(err)}`,
+        },
+        { status: 500, headers: JSON_HEADERS },
+      );
+    }
+
+    // Slice this row's region into `frameCount` equal-width frames.
+    const cellWidth = Math.floor(r.width / row.frameCount);
+    if (cellWidth < 1) {
+      return NextResponse.json(
+        {
+          error: "validation_failed",
+          message: `Row ${rowIdx + 1} ("${row.action}"): frame count ${row.frameCount} is too high for the row width ${r.width}.`,
+        },
+        { status: 400, headers: JSON_HEADERS },
+      );
+    }
+    const usedWidth = cellWidth * row.frameCount;
+    // If the row width isn't perfectly divisible, drop the trailing remainder rather
+    // than scaling — the remainder is usually 1-2 pixels of padding and the user's
+    // visual grid stays intact.
     const frames: SlicedFrame[] = [];
     try {
-      for (let colIdx = 0; colIdx < input.cols; colIdx++) {
-        const buffer = await sharp(source)
+      for (let colIdx = 0; colIdx < row.frameCount; colIdx++) {
+        const cellBuf = await sharp(rowBuffer)
           .extract({
-            left: colIdx * cellW,
-            top: rowIdx * cellH,
-            width: cellW,
-            height: cellH,
+            left: colIdx * cellWidth,
+            top: 0,
+            width: cellWidth,
+            height: r.height,
           })
           .png({ compressionLevel: 9 })
           .toBuffer();
-        frames.push({ index: colIdx, buffer });
+        frames.push({ index: colIdx, buffer: cellBuf });
       }
     } catch (err) {
       console.error(`[package-sprite] row ${rowIdx} slicing error:`, err);
       return NextResponse.json(
         {
           error: "image_processing_failed",
-          message: `Failed to slice row ${rowIdx + 1}. Check that the grid dimensions match the image.`,
+          message: `Failed to slice frames in row ${rowIdx + 1} ("${row.action}").`,
         },
         { status: 500, headers: JSON_HEADERS },
       );
     }
+    void usedWidth;
 
     let composed;
     try {
@@ -175,7 +211,7 @@ async function handle(req: NextRequest) {
       return NextResponse.json(
         {
           error: "image_processing_failed",
-          message: `Failed to package row ${rowIdx + 1} ("${label.action}"). The row may be empty or fully transparent.`,
+          message: `Failed to package row ${rowIdx + 1} ("${row.action}"). The row may be empty or fully transparent.`,
         },
         { status: 500, headers: JSON_HEADERS },
       );
@@ -185,18 +221,18 @@ async function handle(req: NextRequest) {
       frameCount: composed.frameCount,
       frameWidth: composed.frameWidth,
       frameHeight: composed.frameHeight,
-      action: label.action,
+      action: row.action,
       style: input.style,
       provider: "import",
       modelVersion: "imported",
-      prompt: `imported sheet row ${rowIdx + 1}: ${label.action}`,
+      prompt: `imported sheet row ${rowIdx + 1}: ${row.action}`,
       frameQuality: composed.frameQuality,
-      fpsOverride: label.fpsOverride,
-      pivotOverride: label.pivot,
+      fpsOverride: row.fpsOverride,
+      pivotOverride: row.pivot,
     });
 
     importedRows.push({
-      action: label.action,
+      action: row.action,
       sheet: `data:image/png;base64,${composed.sheet.toString("base64")}`,
       manifest,
     });
