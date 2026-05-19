@@ -15,6 +15,7 @@ import type {
   BaseResponse,
   BgRemovalStrength,
   ChromaColor,
+  QualityMode,
   Style,
 } from "@/lib/validators";
 import type { ProviderId } from "@/lib/providers/types";
@@ -37,9 +38,27 @@ interface PersistedBase {
 interface PersistedActions {
   [action: string]: {
     frameCount: FrameCount;
+    qualityMode: QualityMode;
     response: ActionResponse;
   };
 }
+
+const QUALITY_MODE_OPTIONS: Array<{
+  value: QualityMode;
+  label: string;
+  hint: string;
+}> = [
+  {
+    value: "careful",
+    label: "Careful (recommended)",
+    hint: "One model call per frame, same seed, single focused pose. ~4-8x slower but the character stays the same across frames. Capped at 9 frames.",
+  },
+  {
+    value: "fast",
+    label: "Fast",
+    hint: "One model call generates a whole NxN grid. ~9s total. Character identity drifts between cells. Auto-used for 16-frame sheets.",
+  },
+];
 
 interface ApiError {
   error: string;
@@ -52,6 +71,7 @@ export function ActionPanel() {
   const [actions, setActions] = useState<PersistedActions>({});
   const [selectedAction, setSelectedAction] = useState<ActionKey>("walk");
   const [frameCount, setFrameCount] = useState<FrameCount>(4);
+  const [qualityMode, setQualityMode] = useState<QualityMode>("careful");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<ApiError | null>(null);
   const [zipping, setZipping] = useState(false);
@@ -110,6 +130,7 @@ export function ActionPanel() {
           provider: base.request.provider,
           action: selectedAction,
           frameCount,
+          qualityMode,
           baseImage: base.response.image,
           seed: base.request.seed ?? base.response.meta.seed,
         }),
@@ -121,7 +142,11 @@ export function ActionPanel() {
       }
       persistActions({
         ...actions,
-        [selectedAction]: { frameCount, response: body as ActionResponse },
+        [selectedAction]: {
+          frameCount,
+          qualityMode,
+          response: body as ActionResponse,
+        },
       });
     } catch (err) {
       setError({
@@ -275,10 +300,44 @@ export function ActionPanel() {
               ))}
             </div>
             <p className="text-xs text-zinc-500">
-              {frameCount === 4 && "2×2 grid — fastest, lightest, lowest detail"}
-              {frameCount === 8 && "4×2 grid — smoother walk/run cycles"}
-              {frameCount === 9 && "3×3 grid — balanced cycle and one-shot length"}
-              {frameCount === 16 && "4×4 grid — most fluid, slowest to generate"}
+              {frameCount === 4 && "4 frames — fastest to generate"}
+              {frameCount === 8 && "8 frames — smoother walk/run cycles"}
+              {frameCount === 9 && "9 frames — balanced cycle and one-shot length"}
+              {frameCount === 16 && "16 frames — most fluid; auto-uses Fast mode to stay under the timeout"}
+            </p>
+          </fieldset>
+
+          <fieldset className="flex flex-col gap-2">
+            <legend className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
+              Quality mode
+            </legend>
+            <div className="flex gap-2">
+              {QUALITY_MODE_OPTIONS.map((opt) => {
+                const forcedFast = frameCount === 16 && opt.value === "careful";
+                return (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => setQualityMode(opt.value)}
+                    disabled={forcedFast}
+                    className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors disabled:opacity-50 ${
+                      qualityMode === opt.value && !forcedFast
+                        ? "border-zinc-900 bg-zinc-50 dark:border-zinc-50 dark:bg-zinc-900"
+                        : "border-zinc-300 dark:border-zinc-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-zinc-500">
+              {QUALITY_MODE_OPTIONS.find((o) => o.value === qualityMode)?.hint}
+            </p>
+            <p className="text-xs text-zinc-500">
+              <strong>Careful</strong> generates each frame as its own image so the model
+              can&apos;t accidentally render four different characters in one grid. Use this
+              when actions look wonky or identity drifts between frames.
             </p>
           </fieldset>
 

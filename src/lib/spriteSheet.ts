@@ -219,9 +219,24 @@ export async function buildSpriteSheet(
   padding = 4,
 ): Promise<BuiltSheet> {
   const frames = await sliceGrid(grid, cols, rows);
+  return composeSpriteSheet(frames, padding);
+}
+
+/**
+ * Compose a horizontal sprite-sheet strip from pre-separated frame buffers.
+ *
+ * Used by careful per-frame mode (Phase 2.12): instead of slicing a single grid image,
+ * the route generates N independent images and feeds them here. Pipeline is otherwise
+ * identical to buildSpriteSheet: find the union alpha bbox across every frame, uniform-crop
+ * everything to that bbox, then repack horizontally.
+ */
+export async function composeSpriteSheet(
+  frames: SlicedFrame[],
+  padding = 4,
+): Promise<BuiltSheet> {
   const box = await findCommonAlphaBox(frames);
   if (!box) {
-    throw new Error("buildSpriteSheet: every frame was fully transparent");
+    throw new Error("composeSpriteSheet: every frame was fully transparent");
   }
   const cropped = await cropAllToBox(frames, box, padding);
   const frameQuality = await detectFrameQuality(cropped);

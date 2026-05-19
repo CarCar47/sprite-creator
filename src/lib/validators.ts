@@ -65,6 +65,9 @@ export const FrameCountSchema = z.union([
   z.literal(16),
 ]);
 
+export const QualityModeSchema = z.enum(["fast", "careful"]);
+export type QualityMode = z.infer<typeof QualityModeSchema>;
+
 const DataUrlPngSchema = z
   .string()
   .regex(/^data:image\/png;base64,[A-Za-z0-9+/=]+$/, "must be a data:image/png;base64,... URL");
@@ -85,6 +88,10 @@ export const ActionRequestSchema = z.object({
   baseImage: DataUrlPngSchema,
   /** Optional integer seed reused from the base generation for cross-frame identity. */
   seed: z.number().int().nonnegative().optional(),
+  /** 'fast' = one grid call (legacy). 'careful' = N independent per-frame calls with the
+   *  same seed and a focused single-pose prompt; preserves character identity dramatically
+   *  better at the cost of being N times slower. */
+  qualityMode: QualityModeSchema.default("careful"),
 });
 export type ActionRequest = z.infer<typeof ActionRequestSchema>;
 

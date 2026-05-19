@@ -21,6 +21,8 @@ export function buildActionPromptFor(action: ActionKey, input: ActionPromptInput
   return BUILDERS[action](input);
 }
 
+export { buildPerFramePrompt } from "./perFrame";
+
 export {
   ACTION_KEYS,
   FRAME_COUNTS,
