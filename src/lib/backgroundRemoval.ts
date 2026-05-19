@@ -21,7 +21,8 @@ interface StrengthParams {
  *   aggressive  — wide tolerance + extra erosion. Cleans noisy / non-uniform backgrounds
  *                 but may hollow out thin character features (sword blades, antennae).
  */
-const STRENGTH: Record<BgRemovalStrength, StrengthParams> = {
+const STRENGTH: Record<Exclude<BgRemovalStrength, "none">, StrengthParams> = {
+  minimal: { hintTolerance: 20, detectedTolerance: 15, defringe: 0 },
   gentle: { hintTolerance: 40, detectedTolerance: 30, defringe: 0 },
   balanced: { hintTolerance: 80, detectedTolerance: 50, defringe: 2 },
   aggressive: { hintTolerance: 120, detectedTolerance: 80, defringe: 3 },
@@ -60,6 +61,11 @@ export async function removeBackground(
   chromaHint: ChromaColor | string,
   strength: BgRemovalStrength = "balanced",
 ): Promise<Buffer> {
+  if (strength === "none") {
+    // Return as-is so the user can keep the model's original rendering and handle
+    // bg removal externally (Aseprite, Photoshop, etc.).
+    return input;
+  }
   const params = STRENGTH[strength];
   const detected = await detectBackgroundColor(input);
   const hintRgb = hexToRgb(chromaHint);

@@ -9,7 +9,13 @@ export type Style = z.infer<typeof StyleSchema>;
 export const ChromaColorSchema = z.enum(["#00FF00", "#FF00FF"]);
 export type ChromaColor = z.infer<typeof ChromaColorSchema>;
 
-export const BgRemovalStrengthSchema = z.enum(["gentle", "balanced", "aggressive"]);
+export const BgRemovalStrengthSchema = z.enum([
+  "none",
+  "minimal",
+  "gentle",
+  "balanced",
+  "aggressive",
+]);
 export type BgRemovalStrength = z.infer<typeof BgRemovalStrengthSchema>;
 
 export const ProviderIdSchema = z.enum(PROVIDER_IDS);

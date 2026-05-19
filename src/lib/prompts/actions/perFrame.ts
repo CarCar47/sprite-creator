@@ -3,13 +3,13 @@ import type { ActionKey, ActionPromptInput } from "./types";
 
 const STYLE_INSTRUCTIONS: Record<Style, string> = {
   pixel16:
-    "16-bit pixel art. Clean integer pixel grid, limited palette (~16 colors), hard edges, no anti-aliasing, no gradients.",
+    "16-bit pixel art video-game sprite style. Clean integer pixel grid, limited palette (~16 colors), hard edges, no anti-aliasing, no gradients.",
   pixel32:
-    "32-bit pixel art. Detailed pixel art with a richer palette (~32-64 colors), restrained dithering, hard edges, no anti-aliasing on silhouettes.",
+    "32-bit pixel art video-game sprite style. Detailed pixel art with a richer palette (~32-64 colors), restrained dithering, hard edges, no anti-aliasing on silhouettes.",
   cartoon:
-    "2D cartoon illustration. Bold black outlines, flat fill colors, hand-drawn feel, expressive but consistent line weight.",
+    "2D cartoon game character illustration. Bold black outlines, flat fill colors, hand-drawn feel, expressive but consistent line weight.",
   modern:
-    "Modern 2D illustration. Clean vector-style shapes, soft shadows, smooth gradients, contemporary game-art aesthetic.",
+    "Modern 2D game character illustration. Clean vector-style shapes, soft shadows, smooth gradients, contemporary game-art aesthetic.",
 };
 
 const NEGATIVE_GUIDANCE = [
@@ -21,155 +21,165 @@ const NEGATIVE_GUIDANCE = [
   "no scene clutter",
   "no second character",
   "no partial duplicate of the character",
+  "no motion blur",
+  "no speed lines",
 ].join(", ");
 
 /**
- * Per-frame pose tables. Each action has a pose for each of the 16 possible frame indices.
- * The careful per-frame route picks `frameCount` poses from the head of the table.
+ * Per-frame pose descriptions written in concrete, visceral natural language rather than
+ * abstract pose-anatomy math. FLUX.1-schnell at 4 inference steps responds badly to phrases
+ * like "right foot at heel-strike, weight transferring" — those are technical terms it has
+ * no training to interpret as visual poses. The model DOES understand "frozen in mid-stride,
+ * one leg forward and one back, like a video game sprite of someone walking."
  *
- * Critical convention: every pose is described from the SAME viewing angle (side view facing
- * right, or front view) within a single action. This is what eliminates the "back-and-forth
- * flipping" issue seen with grid mode — there is no implicit perspective change per cell.
+ * Each entry is intentionally short and uses real-world references the model has seen on
+ * the internet a million times (video-game sprites, Olympic athletes, fencers, etc.). Every
+ * frame in a single action also locks the view angle in the same wording, which is what
+ * stops the "character flipping left/right between frames" issue that grid mode produced.
  */
 const PER_FRAME_POSES: Record<ActionKey, string[]> = {
   idle: [
-    "standing upright, weight even, arms relaxed at sides, neutral expression, looking forward",
-    "standing upright, chest slightly raised mid-inhale, shoulders 2 pixels higher than neutral, arms still at sides",
-    "standing upright, back to neutral position, eyes half-closed mid-blink",
-    "standing upright, neutral pose identical to the starting frame, eyes open",
-    "standing upright, weight subtly shifted to the right foot, head facing forward",
-    "standing upright, weight returning to center, head slightly turned right",
-    "standing upright, neutral position, eyes half-closed in a blink",
-    "standing upright, neutral position fully restored",
-    "standing upright, neutral position, eyes closed for a longer blink",
-    "standing upright, eyes opening, head slightly tilted",
-    "standing upright, head straight, neutral expression",
-    "standing upright, mid-inhale, chest raised",
-    "standing upright, mid-exhale, shoulders lowered",
-    "standing upright, weight shifted left",
-    "standing upright, weight returning to center",
-    "standing upright in the neutral starting pose for seamless loop",
+    "standing still in a relaxed idle pose, arms hanging at sides, front view, like an idle video-game character waiting",
+    "standing still, taking a small breath in, chest very slightly raised, otherwise identical idle pose, front view",
+    "standing still, blinking, eyes closed, otherwise identical idle pose, front view",
+    "standing still in the same relaxed pose, eyes open again, front view, idle game character",
+    "standing still, weight subtly on the right foot, otherwise identical, front view",
+    "standing still, weight returning to center, head slightly turned right, front view",
+    "standing still, mid-blink, otherwise identical idle pose, front view",
+    "standing still in the neutral idle pose ready to loop, front view",
+    "standing still, eyes closed for a longer blink, otherwise identical, front view",
+    "standing still, eyes opening, head slightly tilted, front view",
+    "standing still, neutral expression, head straight forward, front view",
+    "standing still, deeper breath in, chest slightly raised, front view",
+    "standing still, breath out, shoulders lower, front view",
+    "standing still, weight on left foot, otherwise identical, front view",
+    "standing still, weight back to center, front view",
+    "standing still in the starting neutral idle pose for a seamless loop, front view",
   ],
   walk: [
-    "side view facing right, walking. Left foot planted under the body, right foot lifted and passing forward at knee height. Arms swinging: right arm forward, left arm back. Slight forward lean",
-    "side view facing right, walking. Right foot just touching the ground in front, left foot pushing off behind. Body weight transferring forward",
-    "side view facing right, walking. Right foot planted under the body, left foot lifted and passing forward at knee height. Arms reversed: left arm forward, right arm back",
-    "side view facing right, walking. Left foot just touching the ground in front, right foot pushing off behind",
-    "side view facing right, walking. Right foot fully forward, heel-strike, weight beginning to transfer forward",
-    "side view facing right, walking. Both feet planted briefly, body upright as it transitions through midpoint",
-    "side view facing right, walking. Left foot fully forward, heel-strike",
-    "side view facing right, walking. Both feet planted as the second half of the cycle completes",
-    "side view facing right, walking. Right foot lifted high, knee bent, mid-air. Left foot planted",
-    "side view facing right, walking. Right foot extending forward toward the ground",
-    "side view facing right, walking. Right foot planted, left foot lifting behind",
-    "side view facing right, walking. Left foot mid-air at peak of swing",
-    "side view facing right, walking. Left foot extending forward",
-    "side view facing right, walking. Left foot planted in front, right foot pushing off",
-    "side view facing right, walking. Transitioning back through mid-contact",
-    "side view facing right, walking, returning to the starting pose for seamless loop",
+    "WALKING, frozen mid-stride, side view facing right. The right foot is lifted off the ground and swinging forward. The left foot is planted flat. The body leans very slightly forward. Looks like a video game character walking",
+    "WALKING, frozen mid-step, side view facing right. The right foot has just landed in front of the body, planted flat. The left foot is pushing off behind. Body leans forward",
+    "WALKING, frozen mid-stride, side view facing right. The left foot is lifted off the ground and swinging forward (mirrored from frame 1). The right foot is planted flat. Body leans slightly forward",
+    "WALKING, frozen mid-step, side view facing right. The left foot has just landed in front of the body, planted flat. The right foot is pushing off behind",
+    "WALKING, frozen mid-stride, side view facing right. Right leg is fully forward with the foot striking the ground heel-first. Arms swing naturally — left arm forward, right arm back",
+    "WALKING, frozen at the midpoint of a step, side view facing right. Both feet are on the ground briefly as weight transfers. Body upright",
+    "WALKING, frozen mid-stride, side view facing right. Left leg is fully forward with foot striking the ground heel-first. Arms swung: right arm forward, left arm back",
+    "WALKING, frozen at the midpoint of the second half of the cycle, side view facing right. Returning to the starting pose",
+    "WALKING, frozen mid-stride, side view facing right. Right knee lifted very high, foot in the air. Left foot planted",
+    "WALKING, frozen mid-step, side view facing right. Right foot reaching forward toward the ground",
+    "WALKING, frozen mid-step, side view facing right. Right foot just planted, left foot beginning to lift behind",
+    "WALKING, frozen mid-stride, side view facing right. Left knee lifted very high, foot in the air (mirrored)",
+    "WALKING, frozen mid-step, side view facing right. Left foot reaching forward toward the ground",
+    "WALKING, frozen mid-step, side view facing right. Left foot planted in front, right foot pushing off",
+    "WALKING, side view facing right. Transitioning through the middle of the stride, body upright, weight centered",
+    "WALKING, side view facing right. Back to the starting frame for a seamless loop",
   ],
   run: [
-    "side view facing right, running. Heavy forward lean. Right foot striking the ground in front, left foot fully extended behind mid-air. Arms bent ~90 degrees, swinging hard: left arm forward, right arm back",
-    "side view facing right, running. Right foot planted, body weight pivoting over it, left knee rising fast in front",
-    "side view facing right, running. Left foot striking the ground in front, right foot fully extended behind mid-air. Arms reversed from previous pose",
-    "side view facing right, running. Left foot planted, body weight pivoting over it, right knee rising fast in front",
-    "side view facing right, running. Airborne moment, both feet off the ground, right foot reaching forward, left fully extended back",
-    "side view facing right, running. Right heel-strike, weight transferring forward",
-    "side view facing right, running. Right foot planted at midpoint, left knee at peak",
-    "side view facing right, running. Push-off from right foot, left foot beginning forward swing",
-    "side view facing right, running. Second airborne moment, mirrored: left foot reaching forward, right fully extended back",
-    "side view facing right, running. Left heel-strike, weight transferring forward",
-    "side view facing right, running. Left foot planted at midpoint, right knee at peak",
-    "side view facing right, running. Push-off from left foot",
-    "side view facing right, running. Airborne, right foot reaching forward again",
-    "side view facing right, running. Right heel-strike",
-    "side view facing right, running. Transitioning back through midpoint",
-    "side view facing right, running, returning to the starting pose for seamless loop",
+    "RUNNING, like an Olympic sprinter, frozen mid-stride, side view facing right. Heavy forward body lean. Right leg fully forward and just striking the ground. Left leg fully extended behind, off the ground. Arms bent at ~90 degrees swinging hard — left arm forward, right arm back",
+    "RUNNING, side view facing right. Right foot planted, body weight directly over it, left knee driving forward and up. Heavy forward lean",
+    "RUNNING, side view facing right. Mirrored from frame 1: left leg fully forward striking the ground, right leg fully extended behind off the ground. Arms reversed",
+    "RUNNING, side view facing right. Left foot planted, body weight over it, right knee driving forward and up",
+    "RUNNING, side view facing right. Mid-air moment, both feet completely off the ground, right leg reaching forward, left leg extended back",
+    "RUNNING, side view facing right. Right heel-strike just made, weight rolling forward",
+    "RUNNING, side view facing right. Right foot fully planted underneath, left knee at the very top of its drive forward",
+    "RUNNING, side view facing right. Pushing off explosively from the right foot, left foot beginning to reach forward",
+    "RUNNING, side view facing right. Mid-air moment mirrored: left leg reaching forward, right leg extended back, both feet off the ground",
+    "RUNNING, side view facing right. Left heel-strike just made, weight rolling forward",
+    "RUNNING, side view facing right. Left foot fully planted underneath, right knee at the top of its drive forward",
+    "RUNNING, side view facing right. Pushing off from the left foot",
+    "RUNNING, side view facing right. Mid-air with right leg reaching forward again",
+    "RUNNING, side view facing right. Right heel-strike",
+    "RUNNING, side view facing right. Transitioning back through the midpoint of the cycle",
+    "RUNNING, side view facing right. Returning to the starting sprinting pose for a seamless loop",
   ],
   jump: [
-    "front view, crouched wind-up. Knees bent ~90 degrees, hips low, arms swung back behind body, head down slightly, weight loaded into legs",
-    "front view, launch. Legs extending explosively, arms swinging forward and up, body rising. Feet just leaving the ground",
-    "front view, mid-air apex. Body fully extended upward, arms reaching overhead or out for balance, legs slightly tucked. Highest point of the jump",
-    "front view, landing. Knees bent absorbing impact, arms forward for balance, feet flat on ground, body lowered",
-    "front view, pre-crouch ready stance, weight settling",
-    "front view, deeper crouch, arms swinging back",
-    "front view, crouch peak, arms fully back, ready to launch",
-    "front view, launch begin, arms starting forward swing",
-    "front view, mid-launch, body extending, feet leaving ground",
-    "front view, rising, knees tucking slightly",
-    "front view, apex pose at peak height, arms overhead",
-    "front view, beginning to descend, legs starting to extend toward ground",
-    "front view, mid-descent, body braced for impact",
-    "front view, pre-landing, feet about to contact ground",
-    "front view, landing absorb, knees deep bend",
-    "front view, recovery to standing, neutral pose",
+    "JUMPING, crouched down at the bottom of a jump wind-up, front view. Knees bent deeply, hips low to the ground, arms swung back behind the body. Body looks loaded up like a spring",
+    "JUMPING, mid-launch, front view. Body explosively extending upward, knees still bent slightly, arms swinging forward and up overhead. Feet are just leaving the ground",
+    "JUMPING, at the peak of the jump in mid-air, front view. Body fully extended upward, both arms raised overhead, legs slightly tucked. Hangtime moment, like a video game character at the top of a jump",
+    "LANDING from a jump, front view. Feet just touched the ground, knees bent deep to absorb impact, arms forward for balance, body lowered",
+    "JUMPING, front view, pre-crouch ready stance, weight settling, knees slightly bent",
+    "JUMPING, front view, deeper crouch beginning, arms starting to swing back",
+    "JUMPING, front view, deepest crouch wind-up, arms fully back behind body, ready to launch",
+    "JUMPING, front view, launch beginning, arms starting to swing forward",
+    "JUMPING, front view, feet just leaving the ground, body extending upward",
+    "JUMPING, front view, rising into the air, knees tucking slightly",
+    "JUMPING, front view, mid-air apex pose, arms up overhead, body fully extended",
+    "JUMPING, front view, beginning to descend from the peak",
+    "JUMPING, front view, mid-descent, body braced for the impact below",
+    "LANDING, front view, just before feet touch the ground, body in a ready landing posture",
+    "LANDING, front view, feet planted but knees deeply bent absorbing the impact",
+    "JUMPING, front view, recovery to a standing neutral pose after landing",
   ],
   attack: [
-    "side view facing right, mid-strike. Arm fully extended forward to the right, weapon or fist at full reach, body weight shifted to front (right) foot, slight forward lean",
-    "side view facing right, wind-up. Arms drawn back to the left, weight shifted onto back (left) foot, weapon or fist pulled back behind the shoulder, body coiled",
-    "side view facing right, follow-through. Arm continuing past the strike point, momentum carrying slightly downward to the right, body still leaning forward",
-    "side view facing right, recovery. Arm returning to ready position, weight rebalancing, body coming back to upright stance",
-    "side view facing right, ready stance, weight evenly distributed, weapon held in front",
-    "side view facing right, beginning of wind-up, arms starting to draw back",
-    "side view facing right, wind-up peak, weapon fully cocked",
-    "side view facing right, wind-up hold, body coiled and tense",
-    "side view facing right, strike initiation, arm beginning to extend forward",
-    "side view facing right, mid-strike forward thrust",
-    "side view facing right, strike peak, weapon at full extension",
-    "side view facing right, strike connecting, slight impact emphasis",
-    "side view facing right, follow-through, weapon continuing past target",
-    "side view facing right, follow-through complete, momentum dissipating",
-    "side view facing right, recovery begin, weapon returning",
-    "side view facing right, recovery complete, returning to ready stance",
+    "ATTACKING, like a fencer mid-lunge, side view facing right. Right arm fully extended forward to the right holding a weapon or fist, body weight transferred onto the front (right) leg, body leaning forward into the strike",
+    "ATTACKING, wound up for a strike, side view facing right. Right arm pulled all the way back behind the right shoulder holding the weapon, weight on the back (left) leg, body coiled and tense",
+    "ATTACKING, follow-through after the strike, side view facing right. Right arm has swung past the strike point and is angling slightly down to the right, body still leaning forward, momentum carrying through",
+    "ATTACKING, recovering from the strike, side view facing right. Right arm pulling back to a ready position at the side, body straightening back up to upright stance",
+    "ATTACKING, side view facing right, ready stance with weapon held in front of body, both feet planted evenly",
+    "ATTACKING, side view facing right, beginning to wind up, arm drawing back",
+    "ATTACKING, side view facing right, wind-up peak, weapon all the way back behind shoulder",
+    "ATTACKING, side view facing right, wind-up hold, body coiled, ready to release",
+    "ATTACKING, side view facing right, strike initiation, arm beginning to extend forward",
+    "ATTACKING, side view facing right, mid-thrust forward, arm extending fast",
+    "ATTACKING, side view facing right, strike at full extension, arm completely straight forward",
+    "ATTACKING, side view facing right, strike connecting, small impact frame at full extension",
+    "ATTACKING, side view facing right, follow-through, arm continuing past the strike point",
+    "ATTACKING, side view facing right, follow-through complete, arm angling downward",
+    "ATTACKING, side view facing right, recovery beginning, arm pulling back",
+    "ATTACKING, side view facing right, recovery complete, back to ready stance",
   ],
   hurt: [
-    "front view, impact flinch. Head snapping back, arms thrown up defensively, torso recoiling, eyes closed or grimacing in pain. Feet still planted",
-    "front view, stagger back. Body leaning backward, one foot stepping back to catch balance, arms still raised, expression pained",
-    "front view, pain hold. Body bent slightly forward, one hand on the hurt area (chest or stomach), expression grimaced, weight on one leg",
-    "front view, recovery. Body straightening back up, arms lowering, expression returning to neutral but still slightly tense",
-    "front view, initial flinch, head turning to the side",
-    "front view, recoil peak, body bent backward",
-    "front view, stagger left, off-balance",
-    "front view, stagger right, regaining balance",
-    "front view, pain pose, one knee buckling",
-    "front view, bracing against pain, hands on knees",
-    "front view, wincing, eyes squeezed shut",
-    "front view, pain easing, head lifting",
-    "front view, body straightening, arms slowly lowering",
-    "front view, eyes opening, expression hardening",
-    "front view, final upright stance, slight wince remaining",
-    "front view, fully recovered to ready stance",
+    "HURT, just took a hit, front view. Head snapping backward, arms thrown up in front of the face defensively, torso recoiling backward, face grimacing in pain. Feet still planted",
+    "HURT, staggering backward from the impact, front view. Body leaning backward, one foot stepping back to catch balance, arms still raised, expression pained",
+    "HURT, bent forward in pain, front view. One hand clutching the chest or stomach where they were hit, body slightly hunched, weight on one leg, face grimacing",
+    "HURT, recovering, front view. Body straightening back up, arms lowering, face starting to return to neutral but still tense",
+    "HURT, initial flinch reaction, front view. Head turned sharply to the side from the impact",
+    "HURT, recoil at peak, front view. Body arched backward",
+    "HURT, staggering left to recover balance, front view, off-balance",
+    "HURT, staggering right to recover balance, front view, regaining balance",
+    "HURT, knee buckling slightly in pain, front view, leaning",
+    "HURT, bracing against pain with hands on knees, front view, hunched forward",
+    "HURT, wincing hard, front view, eyes squeezed shut",
+    "HURT, pain easing slightly, front view, lifting head back up",
+    "HURT, body straightening, front view, arms lowering slowly",
+    "HURT, eyes opening, front view, hardening expression",
+    "HURT, final standing pose with a faint wince remaining, front view",
+    "HURT, fully recovered to a ready stance, front view",
   ],
   death: [
-    "front view, knockback flinch. Body recoiling from a final hit, arms flailing outward, head thrown back, eyes wide",
-    "front view, knees buckling. Legs giving out, body collapsing downward, arms falling to sides, head dropping forward",
-    "front view, mid-fall. Body in the air falling backward, limbs limp, eyes closed, no longer holding form",
-    "front view, fallen. Character lying on the ground, limbs splayed, eyes closed, fully motionless",
-    "front view, initial hit recoil, body arched backward",
-    "front view, knees starting to fail, body lowering",
-    "front view, half-collapsed, kneeling",
-    "front view, fully kneeling, hands on the ground",
-    "front view, falling forward, hands no longer supporting",
-    "front view, mid-fall forward, face approaching ground",
-    "front view, just before impact, body horizontal",
-    "front view, impact moment with the ground",
-    "front view, lying face-down or side-up, limbs settling",
-    "front view, final fallen pose, motionless",
-    "front view, same final pose with no motion (hold frame)",
-    "front view, identical final still frame to the previous",
+    "DEATH, just took a fatal hit, front view. Body recoiling violently backward, arms flung outward, head thrown back, eyes wide open in shock",
+    "DEATH, knees buckling, front view. Legs giving out underneath the character, body collapsing straight downward, arms falling limp at the sides, head dropping forward",
+    "DEATH, falling backward through the air, front view. Body horizontal in the air mid-fall, arms and legs limp, eyes closed, no longer holding any pose",
+    "DEAD, lying motionless on the ground, front view (top-down). Limbs splayed out, eyes closed, fully still. This is the final dead frame",
+    "DEATH, initial fatal hit recoil, front view, body arched backward",
+    "DEATH, knees starting to give out, front view, body lowering",
+    "DEATH, mid-collapse, front view, falling to one knee",
+    "DEATH, fully kneeling, front view, hands hitting the ground",
+    "DEATH, falling forward off the knees, front view, hands no longer supporting",
+    "DEATH, mid-fall forward, front view, face approaching the ground",
+    "DEATH, body horizontal just before impact with the ground, front view",
+    "DEATH, impact with the ground, front view, body sprawling out",
+    "DEAD, lying face-down on the ground, front view, limbs settling into final positions",
+    "DEAD, lying still in the final pose, front view, motionless",
+    "DEAD, identical final still frame held, front view",
+    "DEAD, identical final still frame held, front view",
   ],
 };
 
 /**
- * Build a focused single-pose prompt for one frame in careful per-frame mode.
+ * Build a focused single-frame prompt for one frame in careful per-frame mode.
  *
- * Key differences from the grid prompt:
- *   - Single subject, single pose — no grid spec, no per-cell enumeration
- *   - The character description is restated verbatim front-and-center
- *   - Composition guidance assumes the full canvas (no "this is one of N cells")
- *   - View angle is fixed by the pose itself (e.g. "side view facing right") so every frame
- *     in an action shares the same camera, eliminating the back-and-forth flipping that
- *     grid mode produced when the model interpreted different cells as different angles
+ * Key design choices (after a round of action-quality issues with FLUX.1-schnell):
+ * 1. Use ALL-CAPS action verbs ("WALKING", "ATTACKING") at the front of the pose so the
+ *    model treats the action as the primary subject of the image.
+ * 2. Use natural-language pose descriptions ("right leg lifted off the ground and swinging
+ *    forward") rather than technical anatomy ("right knee at peak angle"). The former is
+ *    what diffusion training data labels look like.
+ * 3. Lock the camera angle in the pose text itself ("side view facing right" or "front
+ *    view") so every frame in an action shares the same camera, killing the back-and-forth
+ *    flipping problem.
+ * 4. Reference cultural touchstones ("like a video game character", "like an Olympic
+ *    sprinter", "like a fencer mid-lunge") that the model has seen many times in training.
  */
 export function buildPerFramePrompt(
   input: ActionPromptInput,
@@ -185,14 +195,13 @@ export function buildPerFramePrompt(
     : "";
 
   return [
-    `Generate a single character on a solid ${input.chromaColor} background.`,
-    `Full body, centered in the frame, with at least 8 pixels of clear background padding on every side.`,
+    `Single video-game character sprite, full body, centered in the frame, with at least 8 pixels of clear background padding on every side. The background is a solid uniform fill of exactly ${input.chromaColor}.`,
+    `Action pose: ${pose}.`,
     `Character description (preserve every visual detail exactly): ${input.description}.`,
-    `Pose: ${pose}.`,
     `Style: ${styleInstruction}`,
     paletteClause,
     `Strict negative guidance: ${NEGATIVE_GUIDANCE}.`,
-    `The background must be a uniform fill of exactly ${input.chromaColor} with no shading, no noise, and no anti-aliased edges where it meets the character.`,
+    `The background must be a uniform fill of exactly ${input.chromaColor} with no shading, no noise, no clouds, no scenery, and no anti-aliased edges where it meets the character.`,
   ]
     .filter(Boolean)
     .join("\n\n");

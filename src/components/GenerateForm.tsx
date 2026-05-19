@@ -35,6 +35,16 @@ const BG_REMOVAL_OPTIONS: Array<{
   hint: string;
 }> = [
   {
+    value: "none",
+    label: "None",
+    hint: "Returns the raw model output untouched. Use if you'll remove the bg yourself in Aseprite/Photoshop, or if the model already produced clean transparency.",
+  },
+  {
+    value: "minimal",
+    label: "Minimal",
+    hint: "Only removes pixels that are near-exact-match to the bg. Most subjects survive even if they share colors with the background.",
+  },
+  {
     value: "gentle",
     label: "Gentle",
     hint: "Preserves fragile subject features (thin swords, wings, antennae). Some bg may remain.",
@@ -375,13 +385,13 @@ export function GenerateForm() {
           <legend className="text-sm font-medium text-zinc-700 dark:text-zinc-300">
             Background removal strength
           </legend>
-          <div className="flex gap-2">
+          <div className="grid grid-cols-3 gap-2 sm:grid-cols-5">
             {BG_REMOVAL_OPTIONS.map((opt) => (
               <button
                 key={opt.value}
                 type="button"
                 onClick={() => setBgRemoval(opt.value)}
-                className={`flex-1 rounded-md border px-3 py-2 text-sm transition-colors ${
+                className={`rounded-md border px-3 py-2 text-sm transition-colors ${
                   bgRemoval === opt.value
                     ? "border-zinc-900 bg-zinc-50 dark:border-zinc-50 dark:bg-zinc-900"
                     : "border-zinc-300 dark:border-zinc-700"
