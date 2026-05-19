@@ -15,6 +15,22 @@ const SOFT_TIMEOUT_MS = 50_000;
 const JSON_HEADERS = { "Cache-Control": "no-store" } as const;
 
 export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req);
+  } catch (err) {
+    console.error("[generate-base] uncaught:", err);
+    return NextResponse.json(
+      {
+        error: "internal",
+        message:
+          "An unexpected error occurred during base-character generation. Try again, or check Vercel logs if it recurs.",
+      },
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
+}
+
+async function handlePost(req: NextRequest) {
   let payload: unknown;
   try {
     payload = await req.json();

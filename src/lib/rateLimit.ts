@@ -77,33 +77,43 @@ export async function checkRateLimit(key: string): Promise<RateLimitDecision> {
     return { ok: true, retryAfterSeconds: 0, scope: "none", limit: 0, remaining: 0 };
   }
 
-  const dayResult = await day.limit(key);
-  if (!dayResult.success) {
-    return {
-      ok: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((dayResult.reset - Date.now()) / 1000)),
-      scope: "day",
-      limit: dayResult.limit,
-      remaining: dayResult.remaining,
-    };
-  }
+  try {
+    const dayResult = await day.limit(key);
+    if (!dayResult.success) {
+      return {
+        ok: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((dayResult.reset - Date.now()) / 1000)),
+        scope: "day",
+        limit: dayResult.limit,
+        remaining: dayResult.remaining,
+      };
+    }
 
-  const minuteResult = await minute.limit(key);
-  if (!minuteResult.success) {
+    const minuteResult = await minute.limit(key);
+    if (!minuteResult.success) {
+      return {
+        ok: false,
+        retryAfterSeconds: Math.max(1, Math.ceil((minuteResult.reset - Date.now()) / 1000)),
+        scope: "minute",
+        limit: minuteResult.limit,
+        remaining: minuteResult.remaining,
+      };
+    }
+
     return {
-      ok: false,
-      retryAfterSeconds: Math.max(1, Math.ceil((minuteResult.reset - Date.now()) / 1000)),
-      scope: "minute",
+      ok: true,
+      retryAfterSeconds: 0,
+      scope: "none",
       limit: minuteResult.limit,
       remaining: minuteResult.remaining,
     };
+  } catch (err) {
+    // Upstash Redis is unreachable or returned malformed data. Fail open rather than
+    // crashing the function — the request still goes through, just unrate-limited
+    // until the limiter recovers. Log for observability.
+    console.warn(
+      `[rateLimit] upstash error, failing open: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { ok: true, retryAfterSeconds: 0, scope: "none", limit: 0, remaining: 0 };
   }
-
-  return {
-    ok: true,
-    retryAfterSeconds: 0,
-    scope: "none",
-    limit: minuteResult.limit,
-    remaining: minuteResult.remaining,
-  };
 }

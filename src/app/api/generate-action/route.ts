@@ -44,6 +44,22 @@ function providerErrorToStatus(code: ProviderError["code"]): number {
 }
 
 export async function POST(req: NextRequest) {
+  try {
+    return await handlePost(req);
+  } catch (err) {
+    console.error("[generate-action] uncaught:", err);
+    return NextResponse.json(
+      {
+        error: "internal",
+        message:
+          "An unexpected error occurred during action-sheet generation. Try again, or check Vercel logs if it recurs.",
+      },
+      { status: 500, headers: JSON_HEADERS },
+    );
+  }
+}
+
+async function handlePost(req: NextRequest) {
   let payload: unknown;
   try {
     payload = await req.json();
